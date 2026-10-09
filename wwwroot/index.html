@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' data: blob: about:; child-src 'self' data: blob: about:; object-src 'none';" />
+  <title>ByteSize OS</title>
+  <link rel="icon" href="/assets/app-icon.png" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="os" id="os">
+    <!-- Desktop: wallpapers live in assets/wallpapers (default Kat) -->
+    <div class="desktop" id="desktop">
+      <div class="desktop__pattern" aria-hidden="true"></div>
+
+      <!-- Left dock -->
+      <aside class="dock" id="dock" aria-label="Applications"></aside>
+
+      <!-- Window layer -->
+      <main class="windows" id="windows" aria-label="Open windows"></main>
+
+      <!-- Bottom taskbar -->
+      <footer class="taskbar" id="taskbar">
+        <button class="start-button" id="start-button">
+          <img class="start-button__icon" src="/assets/app-icon.png" alt="" /> START
+        </button>
+        <div class="taskbar__items" id="taskbar-items"></div>
+        <div class="taskbar__clock" id="taskbar-clock">
+          <span id="clock-time">--:--</span>
+          <small id="clock-date">—</small>
+        </div>
+      </footer>
+
+      <!-- Start menu -->
+      <div class="start-menu" id="start-menu" hidden>
+        <div class="start-menu__title">ByteSize <b>OS</b></div>
+        <div class="start-menu__stats" id="start-menu__stats">
+          <span>CPU <b id="sm-cpu">—</b></span>
+          <span>RAM <b id="sm-ram">—</b></span>
+        </div>
+        <div class="start-menu__apps" id="start-menu__apps"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="modal-host" id="modal-host" hidden></div>
+
+  <script src="js/bridge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

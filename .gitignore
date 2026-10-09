@@ -1,0 +1,18 @@
+# Build output
+bin/
+obj/
+
+# Rider / Visual Studio
+.vs/
+.idea/
+*.user
+*.suo
+
+# Publish output
+publish/
+*.publishproj
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store

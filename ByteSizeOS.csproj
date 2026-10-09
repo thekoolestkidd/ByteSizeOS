@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Identity -->
+    <AssemblyName>ByteSizeOS</AssemblyName>
+    <RootNamespace>ByteSizeOS</RootNamespace>
+    <Product>ByteSize OS</Product>
+    <AssemblyTitle>ByteSize OS</AssemblyTitle>
+    <Description>A fast, lightweight, powerful C# + HTML hybrid shell.</Description>
+    <Version>0.1.0</Version>
+    <Company>ByteSize</Company>
+    <ApplicationIcon>app-icon.ico</ApplicationIcon>
+
+    <!-- Speed & size defaults: trim hard, stay single-file friendly. -->
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType Condition="'$(Configuration)'=='Release'">none</DebugType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Shell quality -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+
+    <!-- Don't ship IntelliSense XML docs from referenced packages. -->
+    <AllowedReferenceRelatedFileExtensions Condition="'$(Configuration)'=='Release'">.pdb</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
+  <!-- The frontend ships next to the binary and is served over a virtual host. -->
+  <ItemGroup>
+    <None Update="wwwroot\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <!--
+    The WebView2 package always references its WPF assembly for .NET 5+, even in
+    WinForms-only apps. We never use WPF, so drop it to keep the output lean and
+    avoid the WindowsBase version conflict warning.
+  -->
+  <Target Name="TrimWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
