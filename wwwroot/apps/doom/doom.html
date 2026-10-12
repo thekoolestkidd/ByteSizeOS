@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DOOM</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #doom-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      outline: none;
+      cursor: crosshair;
+      image-rendering: pixelated;
+      object-fit: contain;
+    }
+    #doom-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #e6edf7;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 2px 10px #000;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 40%, rgba(30, 0, 0, .35), rgba(0, 0, 0, .75));
+    }
+    #doom-overlay.hide { display: none; }
+    #doom-overlay .title { font-size: 40px; font-weight: 800; letter-spacing: 5px; }
+    #doom-overlay .title b { color: #ff6b3d; }
+    #doom-overlay .sub { margin-top: 12px; font-size: 15px; color: #ffd9a8; }
+    #doom-overlay .hint { margin-top: 14px; font-size: 13px; color: #9fb0c8; line-height: 1.9; }
+    #doom-overlay .hint .row { display: block; }
+    #doom-overlay kbd, #doom-hud kbd {
+      background: #232b3a; border: 1px solid #3a4457; border-radius: 5px;
+      padding: 1px 6px; font-family: inherit; font-size: 12px; color: #dbe4f3;
+    }
+    #doom-hud {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(15, 18, 26, .72);
+      border: 1px solid rgba(255, 255, 255, .12);
+      color: #cdd7ea;
+      font: 12px "Segoe UI", system-ui, sans-serif;
+      opacity: 0;
+      transition: opacity .4s ease;
+      pointer-events: none;
+    }
+    #doom-hud.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <canvas id="doom-canvas" tabindex="0"></canvas>
+
+  <div id="doom-overlay">
+    <div>
+      <div class="title">D<b>OO</b>M</div>
+      <div class="sub" id="doom-status">Click to play — the mouse is captured for aiming</div>
+      <div class="hint">
+        <span class="row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrow keys — move &amp; turn &nbsp;·&nbsp; mouse — turn</span>
+        <span class="row"><kbd>Left click</kbd> fire &nbsp;·&nbsp; <kbd>Right click</kbd> open / use &nbsp;·&nbsp; <kbd>1</kbd>–<kbd>7</kbd> weapons</span>
+        <span class="row"><kbd>Esc</kbd> releases the mouse &nbsp;·&nbsp; <kbd>Esc</kbd> again opens the DOOM menu</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="doom-hud"><kbd>Esc</kbd> — release mouse</div>
+
+  <script src="doom.js"></script>
+</body>
+</html>

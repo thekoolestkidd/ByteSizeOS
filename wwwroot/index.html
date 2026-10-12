@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' data: blob: about:; child-src 'self' data: blob: about:; object-src 'none';" />
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; img-src 'self' data: blob:; media-src 'self' data: blob: https://media.bytesizeos.local; frame-src 'self' data: blob: about:; child-src 'self' data: blob: about:; object-src 'none';" />
   <title>ByteSize OS</title>
   <link rel="icon" href="/assets/app-icon.png" />
   <link rel="stylesheet" href="css/style.css" />
@@ -27,6 +27,7 @@
           <img class="start-button__icon" src="/assets/app-icon.png" alt="" /> START
         </button>
         <div class="taskbar__items" id="taskbar-items"></div>
+        <button class="theme-toggle" id="theme-toggle" type="button" title="Switch to dark mode" aria-pressed="false">🌙</button>
         <div class="taskbar__clock" id="taskbar-clock">
           <span id="clock-time">--:--</span>
           <small id="clock-date">—</small>
@@ -35,7 +36,7 @@
 
       <!-- Start menu -->
       <div class="start-menu" id="start-menu" hidden>
-        <div class="start-menu__title">ByteSize <b>OS</b></div>
+        <div class="start-menu__title">ByteSize <b>OS</b> <span class="start-menu__version">v2</span></div>
         <div class="start-menu__stats" id="start-menu__stats">
           <span>CPU <b id="sm-cpu">—</b></span>
           <span>RAM <b id="sm-ram">—</b></span>

@@ -11,6 +11,7 @@ public sealed class FileService
 {
     private const int MaxReadBytes = 1_048_576;      // 1 MB text/read cap.
     private const int MaxImageBytes = 12_582_912;    // 12 MB image cap.
+    private const int MaxMediaBytes = 67_108_864;    // 64 MB audio/video cap.
     private const int MaxEntries = 1000;
 
     private readonly string _root = Storage.Root;
@@ -177,7 +178,7 @@ public sealed class FileService
         };
     }
 
-    /// <summary>Reads an image as a data URL (used for wallpapers).</summary>
+    /// <summary>Reads an image or media file as a data URL.</summary>
     public object ReadDataUrl(string? path)
     {
         var resolved = Resolve(path);
@@ -187,13 +188,16 @@ public sealed class FileService
         }
 
         var info = new FileInfo(resolved);
-        if (info.Length > MaxImageBytes)
+        var mime = MimeFor(resolved);
+        var isMedia = mime.StartsWith("audio/", StringComparison.Ordinal)
+            || mime.StartsWith("video/", StringComparison.Ordinal);
+        var limit = isMedia ? MaxMediaBytes : MaxImageBytes;
+        if (info.Length > limit)
         {
-            throw new InvalidOperationException($"Image is larger than {MaxImageBytes / 1_048_576} MB.");
+            throw new InvalidOperationException($"File is larger than {limit / 1_048_576} MB.");
         }
 
         var bytes = File.ReadAllBytes(resolved);
-        var mime = MimeFor(resolved);
         return new
         {
             path = ToVirtual(resolved),
@@ -250,6 +254,14 @@ public sealed class FileService
         ".webp" => "image/webp",
         ".bmp" => "image/bmp",
         ".svg" => "image/svg+xml",
+        ".mp3" => "audio/mpeg",
+        ".wav" => "audio/wav",
+        ".ogg" or ".oga" or ".opus" => "audio/ogg",
+        ".m4a" => "audio/mp4",
+        ".aac" => "audio/aac",
+        ".flac" => "audio/flac",
+        ".webm" => "audio/webm",
+        ".mp4" => "video/mp4",
         _ => "application/octet-stream",
     };
 

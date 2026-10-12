@@ -46,7 +46,10 @@ public sealed class WebBridge
         return this;
     }
 
-    /// <summary>Pushes a one-way event to the frontend (no reply expected).</summary>
+    /// <summary>
+    /// Pushes a one-way event to the frontend (no reply expected). Listeners
+    /// registered with <c>ByteSize.on(fn)</c> receive it as <c>(type, payload)</c>.
+    /// </summary>
     public void Emit(string type, object? payload = null)
     {
         var envelope = JsonSerializer.Serialize(new { type, payload }, Json);

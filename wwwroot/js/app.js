@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    ByteSize OS — frontend (Family A)
    Window manager + dock + taskbar + start menu + built-in apps.
    Talks to the C# backend through ByteSize.invoke (see bridge.js).
@@ -54,6 +54,8 @@
     "toml", "rst", "tex", "gitignore", "env", "props", "targets", "editorconfig",
   ]);
 
+  const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
+
   const uid = () => `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
   /* ======================================================================
@@ -65,7 +67,7 @@
      fallback when the native host (and therefore the bridge) is unavailable,
      e.g. the headless preview, and as a one-time migration source.
      ====================================================================== */
-  const STORE_KEYS = ["wallpaper", "font", "labels", "windowStyle", "dock", "customApps", "pixoogle", "snakeBest", "studioLanguage", "studioCode"];
+  const STORE_KEYS = ["wallpaper", "font", "labels", "windowStyle", "theme", "dock", "customApps", "snakeBest", "tetrisBest", "studioLanguage", "studioCode", "zoom", "phoneHintSeen"];
   const Store = (() => {
     let data = {};
     let loaded = false;
@@ -467,6 +469,16 @@
       });
     }
 
+    // Apps may refuse to change size: `resizable: false` hides the resize grip
+    // and the Maximize button. `api.setResizable(v)` flips it at runtime.
+    function applyResizable(rec, on) {
+      rec.resizable = on;
+      rec.el.classList.toggle("window--fixed", !on);
+      const max = rec.el.querySelector(".notch--max");
+      if (max) max.style.display = on ? "" : "none";
+      if (on && !rec.resizeWired) { enableResize(rec); rec.resizeWired = true; }
+    }
+
     function open(spec) {
       if (spec.id && registry.has(spec.id)) {
         const existing = registry.get(spec.id);
@@ -499,7 +511,11 @@
 
       const task = el("button", "task-button");
       if (spec.accent) task.style.setProperty("--task-accent", spec.accent);
-      task.textContent = `${spec.icon || ""} ${spec.title || "Window"}`.trim();
+      if (spec.icon && spec.icon.startsWith("data:")) {
+        task.innerHTML = `<img src="${spec.icon}" style="vertical-align:middle;margin-right:4px"> ${spec.title || "Window"}`.trim();
+      } else {
+        task.textContent = `${spec.icon || ""} ${spec.title || "Window"}`.trim();
+      }
       layer.appendChild(node);
       taskbarItems.appendChild(task);
 
@@ -507,6 +523,7 @@
         key: spec.id || uid(),
         el: node, task,
         minimized: false, maximized: false, prev: null,
+        resizable: spec.resizable !== false, resizeWired: false,
         onClose: spec.onClose,
       };
 
@@ -519,18 +536,23 @@
         close: () => closeWindow(rec),
         onClose: (fn) => { rec.onClose = fn; },
         onReopen: null,
+        setResizable(value) { applyResizable(rec, value !== false); },
         setTitle(title) {
           node.querySelector(".window__title").textContent = title;
-          task.textContent = `${spec.icon || ""} ${title}`.trim();
+          if (spec.icon && spec.icon.startsWith("data:")) {
+            task.innerHTML = `<img src="${spec.icon}" style="vertical-align:middle;margin-right:4px"> ${title}`.trim();
+          } else {
+            task.textContent = `${spec.icon || ""} ${title}`.trim();
+          }
         },
       };
       rec.api = api;
 
-      node.querySelector(".window__icon").textContent = spec.icon || "";
+      node.querySelector(".window__icon").innerHTML = spec.icon || "";
       node.querySelector(".window__title").textContent = spec.title || "Window";
 
       node.querySelector(".notch--min").onclick = () => minimize(rec);
-      node.querySelector(".notch--max").onclick = () => toggleMaximize(rec);
+      node.querySelector(".notch--max").onclick = () => { if (rec.resizable) toggleMaximize(rec); };
       node.querySelector(".notch--close").onclick = () => closeWindow(rec);
       task.onclick = () => {
         if (rec.minimized) restore(rec);
@@ -540,7 +562,7 @@
       node.addEventListener("pointerdown", () => focus(rec));
 
       enableDrag(rec);
-      enableResize(rec);
+      applyResizable(rec, rec.resizable);
       registry.set(rec.key, rec);
 
       if (typeof spec.render === "function") spec.render(body, api);
@@ -600,6 +622,8 @@
             if (isDirectory) { navigate(path); return; }
             if (TEXT_EXT.has(extName(path))) {
               Content.notepad.open({ path });
+            } else if (IMAGE_EXT.has(extName(path))) {
+              Content.paint.open({ path });
             } else {
               Toast.show(`${baseName(path)} can't be opened inside ByteSize OS.`, "info");
             }
@@ -755,12 +779,13 @@
   /* ---- Paint ------------------------------------------------------------- */
   Content.paint = {
     id: "paint", title: "Paint", icon: "🎨", accent: "#ff4757",
-    description: "Doodle, fill and resize",
-    open() {
+    description: "Draw, open images and zoom",
+    open(args) {
+      const requested = args && args.path;
       WM.open({
         id: "paint", title: "Paint", icon: "🎨", accent: "#ff4757",
-        width: 1000, height: 700,
-        render(body) {
+        width: 1000, height: 700, path: requested,
+        render(body, api) {
           const palette = ["#17181c", "#ff4757", "#ffd000", "#2ed573", "#4cc2ff", "#a55eea", "#ff9f43", "#ffffff"];
           body.innerHTML = `
             <div class="paint">
@@ -771,7 +796,16 @@
                 <span class="chip">Size <input type="range" min="1" max="42" value="7" data-size style="width:110px;vertical-align:middle" /></span>
                 <div class="paint__swatches" data-swatches></div>
                 <input type="color" class="paint__picker" data-picker value="#17181c" title="Custom colour" />
+                <span class="paint__zoom">
+                  <button class="btn" data-zoom-out title="Zoom out (Ctrl -)">➖</button>
+                  <button class="btn paint__zoom-label" data-zoom-label title="Click to fit">100%</button>
+                  <button class="btn" data-zoom-in title="Zoom in (Ctrl +)">➕</button>
+                  <button class="btn" data-zoom="fit" title="Fit the canvas in the window">Fit</button>
+                  <button class="btn" data-zoom="fill" title="Fill the window (crops)">Fill</button>
+                  <button class="btn" data-zoom="100" title="Actual size (Ctrl 1)">1:1</button>
+                </span>
                 <span class="spacer"></span>
+                <button class="btn" data-act="open" title="Open an image into the canvas">🖼️ Open…</button>
                 <button class="btn" data-act="bg" title="Transparent background — saved PNG keeps its alpha">🫥 Transparent: Off</button>
                 <button class="btn" data-act="resize">📐 Resize…</button>
                 <button class="btn btn--danger" data-act="clear">🗑️ Clear</button>
@@ -786,7 +820,11 @@
                 <button class="btn btn--accent" data-rapply>Apply</button>
                 <button class="btn" data-rcancel>Cancel</button>
               </div>
-              <div class="paint__stage"><canvas width="820" height="440"></canvas></div>
+              <div class="paint__stage" data-stage>
+                <div class="paint__canvas-wrap" data-wrap>
+                  <canvas width="820" height="440" tabindex="0"></canvas>
+                </div>
+              </div>
             </div>`;
 
           const canvas = body.querySelector("canvas");
@@ -800,12 +838,17 @@
           const rscale = body.querySelector("[data-rscale]");
           const eraseBtn = body.querySelector('[data-act="erase"]');
           const bgBtn = body.querySelector('[data-act="bg"]');
+          const stage = body.querySelector("[data-stage]");
+          const wrap = body.querySelector("[data-wrap]");
+          const zoomLabel = body.querySelector("[data-zoom-label]");
 
           let tool = "brush";
           let erase = false;
           let transparentBg = false;
           let color = "#17181c";
           let drawing = false;
+          let zoom = 1;
+          let zoomMode = "fit"; // "fit" | "fill" | "manual"
 
           const hexToRgb = (hex) => {
             const value = String(hex).replace("#", "");
@@ -823,6 +866,47 @@
               ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
             ctx.lineJoin = ctx.lineCap = "round";
+          }
+
+          function displayScale(scale, mode) {
+            zoom = Math.max(0.05, Math.min(16, scale));
+            zoomMode = mode;
+            const w = Math.max(1, Math.round(canvas.width * zoom));
+            const h = Math.max(1, Math.round(canvas.height * zoom));
+            wrap.style.width = `${w}px`;
+            wrap.style.height = `${h}px`;
+            canvas.style.width = `${w}px`;
+            canvas.style.height = `${h}px`;
+            zoomLabel.textContent = mode === "manual" ? `${Math.round(zoom * 100)}%` : (mode === "fill" ? "Fill" : "Fit");
+            body.querySelectorAll("[data-zoom]").forEach((button) => {
+              const active = (button.dataset.zoom === "fit" && mode === "fit")
+                || (button.dataset.zoom === "fill" && mode === "fill")
+                || (button.dataset.zoom === "100" && mode === "manual" && Math.abs(zoom - 1) < 0.001);
+              button.classList.toggle("btn--accent", active);
+            });
+          }
+
+          function fitScale(mode) {
+            const availW = Math.max(1, stage.clientWidth - 12);
+            const availH = Math.max(1, stage.clientHeight - 12);
+            const sx = availW / canvas.width;
+            const sy = availH / canvas.height;
+            return mode === "fill" ? Math.max(sx, sy) : Math.min(sx, sy);
+          }
+
+          function zoomTo(mode) {
+            if (mode === "manual") return;
+            displayScale(fitScale(mode), mode);
+          }
+
+          function zoomBy(factor) {
+            const base = zoomMode === "manual" ? zoom : fitScale(zoomMode);
+            displayScale(base * factor, "manual");
+          }
+
+          function refreshZoom() {
+            if (zoomMode === "manual") displayScale(zoom, "manual");
+            else displayScale(fitScale(zoomMode), zoomMode);
           }
 
           function setTool(next) {
@@ -976,6 +1060,7 @@
             ctx.drawImage(snapshot, 0, 0, snapshot.width, snapshot.height, 0, 0,
               rscale.checked ? w : snapshot.width, rscale.checked ? h : snapshot.height);
             resizePanel.hidden = true;
+            refreshZoom();
             Toast.show(`Canvas resized to ${w}×${h}.`, "good");
           };
 
@@ -991,6 +1076,59 @@
               Toast.show(error.message, "error");
             }
           };
+
+          async function loadImagePath(path) {
+            try {
+              const file = await invoke("fs.readDataUrl", { path });
+              const bitmap = new Image();
+              await new Promise((resolve, reject) => {
+                bitmap.onload = resolve;
+                bitmap.onerror = () => reject(new Error("That file isn't a readable image."));
+                bitmap.src = file.dataUrl;
+              });
+              canvas.width = bitmap.naturalWidth || canvas.width;
+              canvas.height = bitmap.naturalHeight || canvas.height;
+              canvas.style.width = "";
+              canvas.style.height = "";
+              paintBase();
+              ctx.globalCompositeOperation = "source-over";
+              ctx.drawImage(bitmap, 0, 0);
+              refreshZoom();
+              Toast.show(`Opened ${baseName(file.path)} — ${canvas.width}×${canvas.height}`, "good");
+            } catch (error) {
+              Toast.show(error.message, "error");
+            }
+          }
+          api.loadPath = loadImagePath;
+          api.onReopen = (next) => { if (next && next.path) loadImagePath(next.path); };
+
+          body.querySelector('[data-act="open"]').onclick = async () => {
+            const path = await FileDialog.show({ mode: "open", title: "Open image" });
+            if (path) loadImagePath(path);
+          };
+
+          body.querySelector("[data-zoom-in]").onclick = () => zoomBy(1.25);
+          body.querySelector("[data-zoom-out]").onclick = () => zoomBy(1 / 1.25);
+          body.querySelector("[data-zoom-label]").onclick = () => zoomTo("fit");
+          body.querySelector('[data-zoom="fit"]').onclick = () => zoomTo("fit");
+          body.querySelector('[data-zoom="fill"]').onclick = () => zoomTo("fill");
+          body.querySelector('[data-zoom="100"]').onclick = () => displayScale(1, "manual");
+          stage.addEventListener("wheel", (event) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15);
+          }, { passive: false });
+          canvas.addEventListener("keydown", (event) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            if (event.key === "=" || event.key === "+") { event.preventDefault(); zoomBy(1.25); }
+            else if (event.key === "-" || event.key === "_") { event.preventDefault(); zoomBy(1 / 1.25); }
+            else if (event.key === "0") { event.preventDefault(); zoomTo("fit"); }
+            else if (event.key === "1") { event.preventDefault(); displayScale(1, "manual"); }
+          });
+
+          const zoomObserver = new ResizeObserver(() => refreshZoom());
+          zoomObserver.observe(stage);
+          api.onClose(() => zoomObserver.disconnect());
 
           canvas.addEventListener("pointerdown", (event) => {
             event.preventDefault();
@@ -1024,6 +1162,8 @@
           canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
           paintBase();
+          refreshZoom();
+          if (requested) loadImagePath(requested);
         },
       });
     },
@@ -1161,11 +1301,332 @@
     },
   };
 
+  /* ---- Tetris ------------------------------------------------------------ */
+  Content.tetris = {
+    id: "tetris", title: "Tetris", icon: "🧱", accent: "#3ec6ff",
+    description: "Stack the blocks, clear the lines",
+    open() {
+      WM.open({
+        id: "tetris", title: "Tetris", icon: "🧱", accent: "#3ec6ff",
+        width: 470, height: 640,
+        render(body, api) {
+          body.innerHTML = `
+            <div class="tetris">
+              <div class="tetris__hud">
+                <span class="chip">Score <b data-score>0</b></span>
+                <span class="chip">Lines <b data-lines>0</b></span>
+                <span class="chip">Level <b data-level>1</b></span>
+                <span class="chip">Best <b data-best>0</b></span>
+              </div>
+              <div class="tetris__stage">
+                <canvas class="tetris__board" width="240" height="480" tabindex="0"></canvas>
+                <div class="tetris__side">
+                  <div class="tetris__next-label">Next</div>
+                  <canvas class="tetris__next" width="96" height="96" tabindex="-1"></canvas>
+                  <button class="btn btn--primary" data-act="start">▶ Play</button>
+                  <button class="btn" data-act="pause">⏸ Pause</button>
+                </div>
+              </div>
+              <div class="tetris__hint">←/→ move · ↑/X rotate · ↓ soft drop · Space hard drop · P pause</div>
+            </div>`;
+
+          const COLS = 10, ROWS = 20, CELL = 24;
+          const SHAPES = {
+            I: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+            O: [[1, 1], [1, 1]],
+            T: [[0, 1, 0], [1, 1, 1], [0, 0, 0]],
+            S: [[0, 1, 1], [1, 1, 0], [0, 0, 0]],
+            Z: [[1, 1, 0], [0, 1, 1], [0, 0, 0]],
+            J: [[1, 0, 0], [1, 1, 1], [0, 0, 0]],
+            L: [[0, 0, 1], [1, 1, 1], [0, 0, 0]],
+          };
+          const COLORS = {
+            I: "#3ec6ff", O: "#ffd93b", T: "#b06bff",
+            S: "#4ce07a", Z: "#ff5d6c", J: "#4c7bff", L: "#ff9f43",
+          };
+
+          const board = body.querySelector(".tetris__board");
+          const ctx = board.getContext("2d");
+          const nextCanvas = body.querySelector(".tetris__next");
+          const nctx = nextCanvas.getContext("2d");
+          const scoreEl = body.querySelector("[data-score]");
+          const linesEl = body.querySelector("[data-lines]");
+          const levelEl = body.querySelector("[data-level]");
+          const bestEl = body.querySelector("[data-best]");
+          const pauseBtn = body.querySelector('[data-act="pause"]');
+
+          let grid, piece, nextType, bag, score, lines, level, over, paused, timer;
+          let best = Store.get("tetrisBest", 0) || 0;
+          bestEl.textContent = best;
+
+          const emptyGrid = () => Array.from({ length: ROWS }, () => Array(COLS).fill(""));
+
+          const bagQueue = () => {
+            if (!bag || !bag.length) {
+              bag = Object.keys(SHAPES);
+              for (let i = bag.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [bag[i], bag[j]] = [bag[j], bag[i]];
+              }
+            }
+            return bag.pop();
+          };
+
+          const makePiece = (type) => {
+            const matrix = SHAPES[type].map((row) => row.slice());
+            return { type, matrix, x: Math.floor((COLS - matrix.length) / 2), y: 0 };
+          };
+
+          const rotate = (matrix) => matrix[0].map((_, i) => matrix.map((row) => row[i]).reverse());
+
+          const collides = (matrix, px, py) => {
+            for (let y = 0; y < matrix.length; y++) {
+              for (let x = 0; x < matrix[y].length; x++) {
+                if (!matrix[y][x]) continue;
+                const bx = px + x, by = py + y;
+                if (bx < 0 || bx >= COLS || by >= ROWS) return true;
+                if (by >= 0 && grid[by][bx]) return true;
+              }
+            }
+            return false;
+          };
+
+          const paintCell = (cx, cy, color, alpha) => {
+            ctx.globalAlpha = alpha == null ? 1 : alpha;
+            ctx.fillStyle = color;
+            ctx.fillRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
+            ctx.fillStyle = "rgba(255,255,255,.22)";
+            ctx.fillRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, 4);
+            ctx.globalAlpha = 1;
+          };
+
+          const canPlay = () => !over && !paused && !!piece;
+
+          const drawNext = () => {
+            nctx.fillStyle = "#12131a";
+            nctx.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+            if (!nextType) return;
+            const matrix = SHAPES[nextType];
+            let minX = 99, maxX = -1, minY = 99, maxY = -1;
+            matrix.forEach((row, y) => row.forEach((value, x) => {
+              if (!value) return;
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            }));
+            const size = 22;
+            const ox = (nextCanvas.width - (maxX - minX + 1) * size) / 2;
+            const oy = (nextCanvas.height - (maxY - minY + 1) * size) / 2;
+            for (let y = minY; y <= maxY; y++) {
+              for (let x = minX; x <= maxX; x++) {
+                if (!matrix[y][x]) continue;
+                const px = ox + (x - minX) * size, py = oy + (y - minY) * size;
+                nctx.fillStyle = COLORS[nextType];
+                nctx.fillRect(px + 1, py + 1, size - 2, size - 2);
+                nctx.fillStyle = "rgba(255,255,255,.22)";
+                nctx.fillRect(px + 1, py + 1, size - 2, 4);
+              }
+            }
+          };
+
+          const draw = () => {
+            ctx.fillStyle = "#12131a";
+            ctx.fillRect(0, 0, board.width, board.height);
+            ctx.strokeStyle = "rgba(255,255,255,.07)";
+            ctx.lineWidth = 1;
+            for (let x = 1; x < COLS; x++) {
+              ctx.beginPath(); ctx.moveTo(x * CELL + 0.5, 0); ctx.lineTo(x * CELL + 0.5, board.height); ctx.stroke();
+            }
+            for (let y = 1; y < ROWS; y++) {
+              ctx.beginPath(); ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(board.width, y * CELL + 0.5); ctx.stroke();
+            }
+            for (let y = 0; y < ROWS; y++) {
+              for (let x = 0; x < COLS; x++) {
+                if (grid[y][x]) paintCell(x, y, COLORS[grid[y][x]]);
+              }
+            }
+            if (piece && !over) {
+              let gy = piece.y;
+              while (!collides(piece.matrix, piece.x, gy + 1)) gy += 1;
+              ctx.globalAlpha = .4;
+              ctx.strokeStyle = COLORS[piece.type];
+              ctx.lineWidth = 2;
+              for (let y = 0; y < piece.matrix.length; y++) {
+                for (let x = 0; x < piece.matrix[y].length; x++) {
+                  if (!piece.matrix[y][x]) continue;
+                  ctx.strokeRect((piece.x + x) * CELL + 2, (gy + y) * CELL + 2, CELL - 4, CELL - 4);
+                }
+              }
+              ctx.globalAlpha = 1;
+              for (let y = 0; y < piece.matrix.length; y++) {
+                for (let x = 0; x < piece.matrix[y].length; x++) {
+                  if (piece.matrix[y][x]) paintCell(piece.x + x, piece.y + y, COLORS[piece.type]);
+                }
+              }
+            }
+            if (over || paused) {
+              ctx.fillStyle = "rgba(23,24,28,.72)";
+              ctx.fillRect(0, board.height / 2 - 50, board.width, 100);
+              ctx.fillStyle = "#fff";
+              ctx.textAlign = "center";
+              ctx.font = "26px 'Comic Sans MS', cursive";
+              ctx.fillText(over ? "GAME OVER" : "PAUSED", board.width / 2, board.height / 2 - 4);
+              ctx.font = "15px 'Comic Sans MS', cursive";
+              ctx.fillText(over ? "press Play to retry" : "press P to resume", board.width / 2, board.height / 2 + 24);
+            }
+          };
+
+          const gameOver = () => {
+            clearInterval(timer);
+            over = true;
+            if (score > best) { best = score; Store.set("tetrisBest", best); bestEl.textContent = best; }
+            draw();
+          };
+
+          const newPiece = () => {
+            piece = makePiece(nextType);
+            nextType = bagQueue();
+            drawNext();
+          };
+
+          const dropInterval = () => Math.max(90, 780 - (level - 1) * 65);
+
+          const armTimer = () => {
+            clearInterval(timer);
+            timer = setInterval(tick, dropInterval());
+          };
+
+          const tick = () => {
+            if (!canPlay()) return;
+            if (collides(piece.matrix, piece.x, piece.y + 1)) { lock(); return; }
+            piece.y += 1;
+            draw();
+          };
+
+          const clearLines = () => {
+            let cleared = 0;
+            for (let y = ROWS - 1; y >= 0; y--) {
+              if (grid[y].every(Boolean)) {
+                grid.splice(y, 1);
+                grid.unshift(Array(COLS).fill(""));
+                cleared += 1;
+                y += 1;
+              }
+            }
+            if (!cleared) return;
+            lines += cleared;
+            linesEl.textContent = lines;
+            const table = { 1: 100, 2: 300, 3: 500, 4: 800 };
+            score += (table[cleared] || 0) * level;
+            scoreEl.textContent = score;
+            const nextLevel = Math.floor(lines / 10) + 1;
+            if (nextLevel !== level) { level = nextLevel; levelEl.textContent = level; armTimer(); }
+          };
+
+          const lock = () => {
+            piece.matrix.forEach((row, y) => row.forEach((value, x) => {
+              if (value && piece.y + y >= 0) grid[piece.y + y][piece.x + x] = piece.type;
+            }));
+            clearLines();
+            newPiece();
+            if (collides(piece.matrix, piece.x, piece.y)) { gameOver(); return; }
+            draw();
+          };
+
+          const move = (dx) => {
+            if (!canPlay() || collides(piece.matrix, piece.x + dx, piece.y)) return;
+            piece.x += dx;
+            draw();
+          };
+
+          const softDrop = () => {
+            if (!canPlay()) return;
+            if (collides(piece.matrix, piece.x, piece.y + 1)) { lock(); return; }
+            piece.y += 1;
+            score += 1;
+            scoreEl.textContent = score;
+            draw();
+          };
+
+          const hardDrop = () => {
+            if (!canPlay()) return;
+            let dropped = 0;
+            while (!collides(piece.matrix, piece.x, piece.y + 1)) { piece.y += 1; dropped += 1; }
+            score += dropped * 2;
+            scoreEl.textContent = score;
+            lock();
+          };
+
+          const spin = () => {
+            if (!canPlay()) return;
+            const rotated = rotate(piece.matrix);
+            for (const kick of [0, -1, 1, -2, 2]) {
+              if (!collides(rotated, piece.x + kick, piece.y)) {
+                piece.matrix = rotated;
+                piece.x += kick;
+                draw();
+                return;
+              }
+            }
+          };
+
+          const setPaused = (value) => {
+            paused = value;
+            pauseBtn.textContent = value ? "▶ Resume" : "⏸ Pause";
+            if (value) clearInterval(timer);
+            else if (!over) armTimer();
+            draw();
+          };
+
+          const start = () => {
+            clearInterval(timer);
+            grid = emptyGrid();
+            score = 0; lines = 0; level = 1; over = false; paused = false; bag = null;
+            scoreEl.textContent = "0";
+            linesEl.textContent = "0";
+            levelEl.textContent = "1";
+            pauseBtn.textContent = "⏸ Pause";
+            nextType = bagQueue();
+            newPiece();
+            draw();
+            armTimer();
+            board.focus();
+          };
+
+          body.querySelector('[data-act="start"]').onclick = start;
+          pauseBtn.onclick = () => {
+            if (!piece || over) return;
+            setPaused(!paused);
+            board.focus();
+          };
+          board.addEventListener("pointerdown", () => board.focus());
+          board.addEventListener("keydown", (event) => {
+            const raw = event.key;
+            const key = raw.length === 1 ? raw.toLowerCase() : raw;
+            if (key === " " || key.startsWith("Arrow") || "wasdxp".includes(key)) { event.preventDefault(); }
+            if (key === "p") { if (piece && !over) setPaused(!paused); return; }
+            if (!canPlay()) return;
+            if (key === "ArrowLeft" || key === "a") move(-1);
+            else if (key === "ArrowRight" || key === "d") move(1);
+            else if (key === "ArrowDown" || key === "s") softDrop();
+            else if (key === "ArrowUp" || key === "w" || key === "x") spin();
+            else if (raw === " ") hardDrop();
+          });
+
+          api.onClose(() => clearInterval(timer));
+
+          grid = emptyGrid();
+          score = 0; lines = 0; level = 1; over = false; paused = false; piece = null; nextType = null;
+          draw();
+        },
+      });
+    },
+  };
+
   /* ---- Terminal ---------------------------------------------------------- */
   const TERMINAL_HELP = [
     "commands: help  clear  sys  mem  ps [n]  ls [path]  cd [path]  pwd",
-    "          cat <path>  mkdir <path>  notepad [path]  paint  snake  calc",
-    "          music  clock  pixoogle  settings  apps  echo <text>  date",
+    "          cat <path>  mkdir <path>  notepad [path]  paint  snake  tetris  calc",
+    "          music  clock  doom  katgpt  packager  settings  theme [dark|light]  apps  echo <text>  date",
   ];
 
   Content.terminal = {
@@ -1208,11 +1669,19 @@
             notepad: (args) => { Content.notepad.open({ path: args.join(" ") || undefined }); write("launched notepad", "ok"); },
             paint: () => { Content.paint.open(); write("launched paint", "ok"); },
             snake: () => { Content.snake.open(); write("launched snake", "ok"); },
+            tetris: () => { Content.tetris.open(); write("launched tetris", "ok"); },
             calc: () => { Content.calc.open(); write("launched calc", "ok"); },
             music: () => { Content.music.open(); write("launched music", "ok"); },
             clock: () => { Content.clock.open(); write("launched clock", "ok"); },
-            pixoogle: () => { Content.pixoogle.open(); write("launched pixoogle", "ok"); },
+            doom: () => { Content.doom.open(); write("launched doom", "ok"); },
+            katgpt: () => { Content.katgpt.open(); write("launched katgpt", "ok"); },
+            packager: () => { Content.packager.open(); write("launched packager", "ok"); },
             settings: () => { Content.settings.open(); write("launched settings", "ok"); },
+            theme: (args) => {
+              const arg = (args[0] || "").toLowerCase();
+              if (arg === "dark" || arg === "light") { setTheme(arg); write(`theme → ${arg}`, "ok"); }
+              else write(`theme is ${currentSettings().theme} — try: theme dark  |  theme light`, "cmd");
+            },
             apps: () => AppRegistry().forEach((app) => write(`  ${app.icon}  ${app.id.padEnd(12)} ${app.title}`)),
             async sys() {
               const info = await invoke("os.info");
@@ -1295,7 +1764,7 @@
           field.addEventListener("pointerdown", (event) => event.stopPropagation());
           body.addEventListener("click", () => field.focus());
 
-          write("ByteSize OS shell v1 — type 'help'.", "cmd");
+          write("ByteSize OS shell v2 — type 'help'.", "cmd");
           updatePrompt();
           setTimeout(() => field.focus(), 30);
         },
@@ -1429,6 +1898,340 @@
     },
   };
 
+  /* ---- App Packager (HTML file -> installable ZIP app) ------------------- */
+  const PACKAGER_EMOJI = [
+    "📦", "🧰", "🎮", "🕹️", "🎨", "🖌️", "🎵", "🎧", "📝", "📒",
+    "🧮", "🔬", "🚀", "⭐", "🌟", "🔥", "💡", "🧩", "🗺️", "📷",
+    "🔧", "⚙️", "🎲", "🃏", "🍕", "🍩", "🌈", "☕", "🧪", "📚",
+    "🕰️", "💾", "🐱", "🐸", "🦄", "🐙", "🧸", "🌸", "🍄", "👾",
+  ];
+  const PACKAGER_ACCENTS = [
+    "#8e7cff", "#4cc2ff", "#2ed573", "#ff9f43", "#ff6b81",
+    "#ff7ac2", "#fdcb6e", "#00cec9", "#6c5ce7", "#e17055",
+  ];
+  const packagerSlug = (text) => String(text || "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
+  Content.packager = {
+    id: "packager", title: "App Packager", icon: "🧰", accent: "#8e7cff",
+    description: "Turn an HTML file into an installable ZIP app",
+    open() {
+      WM.open({
+        id: "packager", title: "App Packager", icon: "🧰", accent: "#8e7cff",
+        width: 720, height: 660,
+        render(body, api) {
+          const state = {
+            sourcePath: null, sourceHtml: "", resultHtml: "", js: "", scripts: 0,
+            title: "", id: "", icon: "📦", accent: "#8e7cff", description: "",
+            resizable: true, entry: "index.html", script: "app.js", idTouched: false,
+          };
+
+          body.innerHTML = `
+            <div class="packager">
+              <section class="packager__card">
+                <h3 class="packager__title">1 · Source HTML</h3>
+                <p class="muted" style="margin-top:0">
+                  Choose one <b>.html</b> file from your sandbox. Every embedded
+                  <span class="mono">&lt;script&gt;</span> block is pulled out into a single
+                  <b>.js</b> file, leaving a clean document behind.
+                </p>
+                <div class="row">
+                  <button class="btn btn--accent" data-source>📂 Choose a .html…</button>
+                  <span class="chip muted" data-source-info>No file chosen</span>
+                </div>
+                <p class="muted" data-extract-info style="margin:8px 0 0"></p>
+              </section>
+
+              <section class="packager__card" data-meta-card hidden>
+                <h3 class="packager__title">2 · App metadata</h3>
+                <div class="packager__grid">
+                  <label class="packager__field">
+                    <span>App name</span>
+                    <input class="field" data-title placeholder="My Cool App" />
+                  </label>
+                  <label class="packager__field">
+                    <span>App id</span>
+                    <input class="field mono" data-id placeholder="my-cool-app" />
+                  </label>
+                  <label class="packager__field packager__field--wide">
+                    <span>Description</span>
+                    <input class="field" data-desc placeholder="What does it do?" />
+                  </label>
+                  <label class="packager__field">
+                    <span>Window title icon</span>
+                    <input class="field" data-icon-input maxlength="8" placeholder="📦" />
+                  </label>
+                  <label class="packager__field">
+                    <span>Accent colour</span>
+                    <input class="packager__color" type="color" data-accent-input value="#8e7cff" />
+                  </label>
+                </div>
+
+                <div class="packager__icons" data-icons></div>
+                <div class="packager__accents" data-accents></div>
+
+                <label class="packager__check">
+                  <input type="checkbox" data-resizable checked /> Let the user resize this app's window
+                </label>
+
+                <details class="packager__advanced">
+                  <summary>Advanced · file names</summary>
+                  <div class="packager__grid" style="margin-top:10px">
+                    <label class="packager__field">
+                      <span>Entry (.html)</span>
+                      <input class="field mono" data-entry value="index.html" />
+                    </label>
+                    <label class="packager__field">
+                      <span>Script (.js)</span>
+                      <input class="field mono" data-script value="app.js" />
+                    </label>
+                  </div>
+                </details>
+              </section>
+
+              <section class="packager__card" data-meta-card hidden>
+                <h3 class="packager__title">3 · Build it</h3>
+                <div class="packager__preview" data-preview>
+                  <span class="packager__preview-glyph" data-preview-glyph>📦</span>
+                  <div style="flex:1">
+                    <b data-preview-title>Untitled app</b><br />
+                    <small class="muted" data-preview-desc>A ByteSize ZIP app</small>
+                  </div>
+                  <span class="chip mono" data-preview-id>app</span>
+                </div>
+                <div class="row" style="margin-top:12px">
+                  <span class="muted" style="white-space:nowrap">Save as:</span>
+                  <input class="field mono" data-zipname value="app.zip" style="max-width:220px" />
+                </div>
+                <div class="row" style="margin-top:10px">
+                  <button class="btn btn--accent" data-install>📦 Build &amp; Install</button>
+                  <button class="btn" data-save>💾 Save .zip only</button>
+                  <span class="chip muted" data-status hidden></span>
+                </div>
+              </section>
+            </div>`;
+
+          const q = (selector) => body.querySelector(selector);
+          const sourceInfo = q("[data-source-info]");
+          const extractInfo = q("[data-extract-info]");
+          const metaCards = body.querySelectorAll("[data-meta-card]");
+          const status = q("[data-status]");
+          const zipName = q("[data-zipname]");
+          const titleInput = q("[data-title]");
+          const idInput = q("[data-id]");
+          const iconInput = q("[data-icon-input]");
+          const accentInput = q("[data-accent-input]");
+          const descInput = q("[data-desc]");
+          const resizableInput = q("[data-resizable]");
+          const entryInput = q("[data-entry]");
+          const scriptInput = q("[data-script]");
+
+          /* --- inline-script extraction --- */
+          function extractInlineScripts(html) {
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            const isJavaScript = (script) => {
+              const type = (script.getAttribute("type") || "").trim().toLowerCase();
+              return type === "" || type === "module"
+                || type === "text/javascript" || type === "application/javascript"
+                || type === "application/ecmascript" || type === "text/ecmascript";
+            };
+            const scripts = Array.from(doc.querySelectorAll("script"))
+              .filter((script) => !script.getAttribute("src") && isJavaScript(script));
+            const parts = [];
+            scripts.forEach((script, index) => {
+              parts.push(`/* --- embedded script #${index + 1} --- */\n${(script.textContent || "").trim()}`);
+              script.remove();
+            });
+            return {
+              html: "<!DOCTYPE html>\n" + doc.documentElement.outerHTML,
+              js: parts.join("\n\n"),
+              count: scripts.length,
+              title: (doc.querySelector("title")?.textContent || "").trim(),
+            };
+          }
+
+          function setTitle(value) {
+            state.title = value;
+            titleInput.value = value;
+            if (!state.idTouched) {
+              state.id = packagerSlug(value);
+              idInput.value = state.id;
+            }
+            syncPreview();
+          }
+
+          function syncPreview() {
+            body.querySelector("[data-preview-glyph]").innerHTML = state.icon || "📦";
+            body.querySelector("[data-preview-title]").textContent = state.title || "Untitled app";
+            body.querySelector("[data-preview-desc]").textContent = state.description || "A ByteSize ZIP app";
+            body.querySelector("[data-preview-id]").textContent = state.id || "app";
+            body.querySelector("[data-preview]").style.setProperty("--accent", state.accent);
+            if (!zipName.dataset.touched) zipName.value = `${state.id || "app"}.zip`;
+          }
+
+          function setStatus(text, kind) {
+            status.textContent = text || "";
+            status.hidden = !text;
+            status.style.background = kind === "error" ? "#ffe0e0" : kind === "good" ? "#e2ffe9" : "";
+          }
+
+          function registerInstalled(app) {
+            const list = (Store.get("customApps", []) || []).filter((a) => a && a.id !== app.id);
+            list.push({ ...app, installedAt: Date.now() });
+            Store.set("customApps", list);
+            const dockSet = new Set(dockIds());
+            dockSet.add(app.id);
+            Store.set("dock", [...dockSet]);
+            renderDock();
+            renderStartApps();
+          }
+
+          function applyExtraction(html, path) {
+            const result = extractInlineScripts(html);
+            state.sourceHtml = html;
+            state.resultHtml = result.html;
+            state.js = result.js || "/* No inline <script> was found in the source HTML. */";
+            state.scripts = result.count;
+            state.sourcePath = path;
+
+            sourceInfo.textContent = `${baseName(path)} · ${fmtBytes(html.length)}`;
+            extractInfo.innerHTML = result.count
+              ? `Extracted <b>${result.count}</b> inline script${result.count === 1 ? "" : "s"} → <b class="mono">${esc(state.script)}</b> (${fmtBytes(state.js.length)}).`
+              : `No inline <span class="mono">&lt;script&gt;</span> found — <b class="mono">${esc(state.script)}</b> will just hold a placeholder.`;
+
+            if (!state.title) setTitle(result.title || baseName(path).replace(/\.[^.]+$/, ""));
+            body.querySelectorAll("[data-meta-card]").forEach((card) => { card.hidden = false; });
+            syncPreview();
+          }
+
+          async function build({ install }) {
+            if (!state.sourcePath) {
+              Toast.show("Choose an .html file first.", "error");
+              return;
+            }
+            const title = state.title.trim();
+            if (!title) {
+              Toast.show("Give your app a name.", "error");
+              return;
+            }
+
+            const id = packagerSlug(state.id) || packagerSlug(title) || "app";
+            const requested = baseName(zipName.value.trim() || `${id}.zip`);
+            const file = requested.toLowerCase().endsWith(".zip") ? requested : `${requested}.zip`;
+            const outPath = joinPath("/Downloads", file);
+            const entry = baseName(state.entry.trim() || "index.html");
+            const script = baseName(state.script.trim() || "app.js");
+            const metadata = JSON.stringify({
+              title, id,
+              icon: state.icon || "📦",
+              accent: state.accent || "#8e7cff",
+              description: state.description.trim(),
+              resizable: state.resizable,
+              entry, script,
+            }, null, 2);
+
+            setStatus("Building…", "");
+            try {
+              const packed = await invoke("app.package", {
+                path: joinPath("/Downloads", file),
+                metadata, entry, html: state.resultHtml, script, js: state.js,
+              });
+              if (install) {
+                const result = await invoke("app.installZip", { path: packed.path });
+                registerInstalled(result.app);
+                setStatus(`Installed ${result.app.icon} ${result.app.title} → ${packed.path}`, "good");
+                Toast.show(`Installed ${result.app.icon} ${result.app.title} — check your dock!`, "good", 4200);
+              } else {
+                setStatus(`Saved ${packed.path} (${fmtBytes(packed.size)})`, "good");
+                Toast.show(`Saved ${packed.path}`, "good", 3600);
+              }
+            } catch (error) {
+              setStatus(error.message, "error");
+              Toast.show(error.message, "error", 6500);
+            }
+          }
+
+          /* --- wiring --- */
+          body.querySelector("[data-source]").onclick = async () => {
+            const path = await FileDialog.show({ mode: "open", title: "Choose a .html file", startPath: "/Downloads" });
+            if (!path) return;
+            if (!/\.html?$/i.test(path)) {
+              Toast.show("That isn't a .html file.", "error");
+              return;
+            }
+            try {
+              const file = await invoke("fs.readText", { path });
+              applyExtraction(file.content, file.path || path);
+              Toast.show(`Loaded ${baseName(path)}`, "good");
+            } catch (error) {
+              Toast.show(error.message, "error", 6500);
+            }
+          };
+
+          const iconHost = body.querySelector("[data-icons]");
+          PACKAGER_EMOJI.forEach((emoji) => {
+            const button = el("button", "packager__icon", emoji);
+            button.type = "button";
+            button.classList.toggle("packager__icon--active", emoji === state.icon);
+            button.onclick = () => {
+              state.icon = emoji;
+              iconInput.value = emoji;
+              iconHost.querySelectorAll(".packager__icon").forEach((b) => {
+                b.classList.toggle("packager__icon--active", b === button);
+              });
+              syncPreview();
+            };
+            iconHost.appendChild(button);
+          });
+
+          const accentHost = body.querySelector("[data-accents]");
+          PACKAGER_ACCENTS.forEach((color) => {
+            const swatch = el("button", "packager__accent");
+            swatch.type = "button";
+            swatch.dataset.color = color;
+            swatch.style.background = color;
+            swatch.title = color;
+            swatch.classList.toggle("packager__accent--active", color.toLowerCase() === state.accent.toLowerCase());
+            swatch.onclick = () => {
+              state.accent = color;
+              accentInput.value = color;
+              accentHost.querySelectorAll(".packager__accent").forEach((s) => {
+                s.classList.toggle("packager__accent--active", s.dataset.color === color);
+              });
+              syncPreview();
+            };
+            accentHost.appendChild(swatch);
+          });
+
+          titleInput.addEventListener("input", () => {
+            state.title = titleInput.value;
+            if (!state.idTouched) { state.id = packagerSlug(titleInput.value); idInput.value = state.id; }
+            syncPreview();
+          });
+          idInput.addEventListener("input", () => {
+            state.idTouched = true;
+            state.id = packagerSlug(idInput.value);
+            idInput.value = state.id;
+            syncPreview();
+          });
+          iconInput.addEventListener("input", () => { state.icon = iconInput.value.trim(); syncPreview(); });
+          accentInput.addEventListener("input", () => { state.accent = accentInput.value; syncPreview(); });
+          descInput.addEventListener("input", () => { state.description = descInput.value; syncPreview(); });
+          resizableInput.addEventListener("change", () => { state.resizable = resizableInput.checked; });
+          entryInput.addEventListener("input", () => { state.entry = entryInput.value; });
+          scriptInput.addEventListener("input", () => { state.script = scriptInput.value; });
+          zipName.addEventListener("input", () => { zipName.dataset.touched = "1"; });
+
+          body.querySelector("[data-install]").onclick = () => build({ install: true });
+          body.querySelector("[data-save]").onclick = () => build({ install: false });
+
+          api.onReopen = () => {};
+          syncPreview();
+        },
+      });
+    },
+  };
+
   /* ---- Calculator -------------------------------------------------------- */
   Content.calc = {
     id: "calc", title: "Calculator", icon: "🧮", accent: "#4cc2ff",
@@ -1437,6 +2240,7 @@
       WM.open({
         id: "calc", title: "Calculator", icon: "🧮", accent: "#4cc2ff",
         width: 300, height: 440,
+        resizable: false,
         render(body) {
           body.innerHTML = `
             <div class="calc">
@@ -1541,14 +2345,14 @@
     },
   };
 
-  /* ---- Music (lo-fi synth radio) ----------------------------------------- */
+  /* ---- Music (plays the songs in the sandbox /Music folder) -------------- */
   Content.music = {
     id: "music", title: "Music", icon: "🎵", accent: "#a55eea",
-    description: "Lo-fi radio — synth tunes, no files needed",
+    description: "Play the songs in your /Music folder",
     open() {
       WM.open({
         id: "music", title: "Music", icon: "🎵", accent: "#a55eea",
-        width: 460, height: 430,
+        width: 520, height: 520,
         render(body, api) {
           body.innerHTML = `
             <div class="music">
@@ -1556,7 +2360,7 @@
                 <div class="music__art" data-art>🎵</div>
                 <div class="music__now">
                   <b data-title>—</b>
-                  <small class="muted" data-sub>pick a track</small>
+                  <small class="muted" data-sub>Scanning /Music…</small>
                 </div>
                 <div class="music__eq"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               </div>
@@ -1564,7 +2368,13 @@
                 <button class="btn" data-prev title="Previous">⏮</button>
                 <button class="btn btn--accent music__play" data-play title="Play / pause">▶</button>
                 <button class="btn" data-next title="Next">⏭</button>
-                <input class="music__vol" type="range" data-vol min="0" max="1" step="0.05" value="0.7" aria-label="Volume" />
+                <button class="btn" data-refresh title="Rescan /Music">⟳</button>
+                <input class="music__vol" type="range" data-vol min="0" max="1" step="0.05" value="0.8" aria-label="Volume" />
+              </div>
+              <div class="music__seek">
+                <span class="music__time" data-cur>0:00</span>
+                <input type="range" data-seek min="0" max="1000" step="1" value="0" aria-label="Seek" />
+                <span class="music__time" data-dur>0:00</span>
               </div>
               <div class="music__tracks" data-tracks></div>
             </div>`;
@@ -1575,119 +2385,170 @@
           const tracksEl = body.querySelector("[data-tracks]");
           const playBtn = body.querySelector("[data-play]");
           const volInput = body.querySelector("[data-vol]");
+          const seekInput = body.querySelector("[data-seek]");
+          const curEl = body.querySelector("[data-cur]");
+          const durEl = body.querySelector("[data-dur]");
+          const root = body.querySelector(".music");
 
-          const NOTE_SEMIS = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
-          const noteFreq = (name) => {
-            const match = /^([A-G]#?)(\d)$/.exec(String(name).trim());
-            if (!match || !(match[1] in NOTE_SEMIS)) return 0;
-            const midi = (parseInt(match[2], 10) + 1) * 12 + NOTE_SEMIS[match[1]];
-            return 440 * Math.pow(2, (midi - 69) / 12);
+          const AUDIO_DIR = "/Music";
+          const MEDIA_HOST = "https://media.bytesizeos.local";
+          const AUDIO_EXT = ["mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "webm"];
+
+          const audio = document.createElement("audio");
+          audio.preload = "metadata";
+          audio.volume = Number(volInput.value) || 0.8;
+
+          let tracks = [];
+          let trackIdx = -1;
+          let retriedViaBridge = false;
+
+          const isAudio = (name) => {
+            const dot = String(name).lastIndexOf(".");
+            return dot > 0 && AUDIO_EXT.includes(name.slice(dot + 1).toLowerCase());
           };
-
-          const TRACKS = [
-            { name: "Sunny Day", emoji: "☀️", bpm: 118, notes: "C5 D5 E5 G5 E5 D5 C5 A4 C5 D5 E5 G5 A5 G5 E5 C5", bass: "C3 G3 A3 E3" },
-            { name: "Starlight", emoji: "🌙", bpm: 96, notes: "A4 B4 C5 B4 A4 G#4 F#4 G#4 A4 B4 C5 B4 A4 G#4 E4 F#4", bass: "A2 E3 F#3 C#3" },
-            { name: "Park Hop", emoji: "🛹", bpm: 132, notes: "G4 A4 B4 D5 B4 A4 G4 E4 G4 A4 B4 D5 E5 D5 B4 G4", bass: "G2 D3 E3 C3" },
-          ];
-
-          let ac = null, master = null, timer = null;
-          let playing = false, trackIdx = 0, step = 0, nextTime = 0;
-
-          function ensureContext() {
-            if (ac) return;
-            ac = new (window.AudioContext || window.webkitAudioContext)();
-            master = ac.createGain();
-            master.gain.value = Number(volInput.value) || 0.7;
-            master.connect(ac.destination);
-          }
-
-          function playNote(freq, time, dur, type, gain) {
-            const osc = ac.createOscillator();
-            const env = ac.createGain();
-            osc.type = type;
-            osc.frequency.value = freq;
-            env.gain.setValueAtTime(0.0001, time);
-            env.gain.exponentialRampToValueAtTime(gain, time + 0.012);
-            env.gain.exponentialRampToValueAtTime(0.0001, time + dur);
-            osc.connect(env);
-            env.connect(master);
-            osc.start(time);
-            osc.stop(time + dur + 0.05);
-          }
-
-          function schedule() {
-            const track = TRACKS[trackIdx];
-            const melody = track.notes.split(/\s+/);
-            const bass = track.bass.split(/\s+/);
-            const stepSeconds = 60 / track.bpm / 4;
-            while (nextTime < ac.currentTime + 0.12) {
-              const mf = noteFreq(melody[step % melody.length]);
-              if (mf) playNote(mf, nextTime, stepSeconds * 0.85, "square", 0.05);
-              if (step % 4 === 0) {
-                const bf = noteFreq(bass[Math.floor(step / 4) % bass.length]);
-                if (bf) playNote(bf / 2, nextTime, stepSeconds * 3.2, "triangle", 0.11);
-              }
-              step = (step + 1) % 64;
-              nextTime += stepSeconds;
-            }
-          }
+          const mediaUrl = (path) =>
+            MEDIA_HOST + "/" + String(path).split("/").filter(Boolean).map(encodeURIComponent).join("/");
+          const fmtTime = (sec) => {
+            if (!isFinite(sec) || sec < 0) return "0:00";
+            return Math.floor(sec / 60) + ":" + String(Math.floor(sec % 60)).padStart(2, "0");
+          };
+          const fmtSize = (bytes) => {
+            const n = Number(bytes) || 0;
+            if (n < 1024) return n + " B";
+            if (n < 1048576) return Math.round(n / 1024) + " KB";
+            return (n / 1048576).toFixed(1) + " MB";
+          };
 
           function renderTracks() {
             tracksEl.innerHTML = "";
-            TRACKS.forEach((track, index) => {
+            if (!tracks.length) {
+              const empty = el("div", "music__empty");
+              empty.innerHTML = `No songs yet. Drop audio files (MP3, WAV, OGG…) into the <b>/Music</b> folder, then press ⟳.`;
+              tracksEl.appendChild(empty);
+              return;
+            }
+            tracks.forEach((track, index) => {
               const row = el("button", "music__track" + (index === trackIdx ? " music__track--active" : ""));
-              row.innerHTML = `<span>${track.emoji}</span><span style="flex:1;text-align:left">${esc(track.name)}</span><small class="muted">${track.bpm} BPM</small>`;
-              row.onclick = () => selectTrack(index);
+              row.innerHTML = `<span>🎵</span><span class="music__track-name">${esc(track.name)}</span><small class="muted">${fmtSize(track.size)}</small>`;
+              row.onclick = () => selectTrack(index, true);
               tracksEl.appendChild(row);
             });
           }
 
-          function selectTrack(index) {
-            trackIdx = index;
-            step = 0;
-            nextTime = 0;
+          function refreshHeader() {
+            const track = tracks[trackIdx];
+            artEl.textContent = "🎵";
+            titleEl.textContent = track ? track.name : "—";
+            if (!tracks.length) subEl.textContent = "Empty /Music folder";
+            else if (track) subEl.textContent = `${trackIdx + 1} of ${tracks.length} · ${audio.paused ? "paused" : "playing"}`;
+            else subEl.textContent = `${tracks.length} song${tracks.length === 1 ? "" : "s"} in /Music — pick one`;
+          }
+
+          function selectTrack(index, autoplay) {
+            if (!tracks.length) return;
+            trackIdx = ((index % tracks.length) + tracks.length) % tracks.length;
+            retriedViaBridge = false;
+            audio.src = mediaUrl(tracks[trackIdx].path);
+            seekInput.value = "0";
+            curEl.textContent = "0:00";
+            durEl.textContent = "0:00";
             renderTracks();
-            artEl.textContent = TRACKS[index].emoji;
-            titleEl.textContent = TRACKS[index].name;
-            if (playing) { stop(); play(); }
+            refreshHeader();
+            if (autoplay) play();
           }
 
           function play() {
-            ensureContext();
-            ac.resume();
-            playing = true;
-            step = 0;
-            nextTime = ac.currentTime + 0.08;
-            timer = setInterval(schedule, 30);
-            playBtn.textContent = "⏸";
-            body.querySelector(".music").classList.add("music--playing");
-            subEl.textContent = `${trackIdx + 1} of ${TRACKS.length} · playing`;
-          }
-
-          function stop() {
-            playing = false;
-            clearInterval(timer);
-            timer = null;
-            playBtn.textContent = "▶";
-            body.querySelector(".music").classList.remove("music--playing");
-            subEl.textContent = `${trackIdx + 1} of ${TRACKS.length} · ${TRACKS[trackIdx].bpm} BPM`;
+            if (!tracks.length) return;
+            audio.play().catch((error) => {
+              subEl.textContent = "Can't play this file" + (error && error.message ? " — " + error.message : "");
+            });
           }
 
           function toggle() {
-            if (playing) stop();
-            else play();
+            if (!tracks.length) return;
+            if (trackIdx < 0) { selectTrack(0, true); return; }
+            if (audio.paused) play();
+            else audio.pause();
           }
 
+          async function scan() {
+            subEl.textContent = "Scanning /Music…";
+            const currentPath = tracks[trackIdx] ? tracks[trackIdx].path : null;
+            let found = [];
+            try {
+              const listing = await invoke("fs.list", { path: AUDIO_DIR });
+              found = (listing.entries || [])
+                .filter((entry) => !entry.isDirectory && isAudio(entry.name))
+                .map((entry) => ({ name: entry.name, path: entry.path, size: entry.size }));
+            } catch (_) {
+              found = [];
+            }
+            tracks = found.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+            const keep = currentPath ? tracks.findIndex((t) => t.path === currentPath) : -1;
+            if (keep >= 0) trackIdx = keep;
+            else if (trackIdx >= tracks.length) trackIdx = tracks.length ? 0 : -1;
+            renderTracks();
+            refreshHeader();
+          }
+
+          audio.addEventListener("play", () => {
+            root.classList.add("music--playing");
+            playBtn.textContent = "⏸";
+            refreshHeader();
+          });
+          audio.addEventListener("pause", () => {
+            root.classList.remove("music--playing");
+            playBtn.textContent = "▶";
+            if (trackIdx >= 0) refreshHeader();
+          });
+          audio.addEventListener("ended", () => {
+            if (tracks.length) selectTrack(trackIdx + 1, true);
+          });
+          audio.addEventListener("loadedmetadata", () => {
+            durEl.textContent = fmtTime(audio.duration);
+            seekInput.value = "0";
+          });
+          audio.addEventListener("timeupdate", () => {
+            curEl.textContent = fmtTime(audio.currentTime);
+            if (audio.duration) seekInput.value = String(Math.round((audio.currentTime / audio.duration) * 1000));
+          });
+          audio.addEventListener("error", async () => {
+            const track = tracks[trackIdx];
+            if (!track) return;
+            // The media host streams the file; if that failed, read it over the
+            // bridge as a data URL instead.
+            if (!retriedViaBridge) {
+              retriedViaBridge = true;
+              subEl.textContent = "Trying another way…";
+              try {
+                const file = await invoke("fs.readDataUrl", { path: track.path });
+                audio.src = file.dataUrl;
+                audio.load();
+                play();
+                return;
+              } catch (_) { /* fall through */ }
+            }
+            root.classList.remove("music--playing");
+            playBtn.textContent = "▶";
+            subEl.textContent = `Can't play “${track.name}” — unsupported format?`;
+          });
+
           playBtn.onclick = toggle;
-          body.querySelector("[data-prev]").onclick = () => selectTrack((trackIdx + TRACKS.length - 1) % TRACKS.length);
-          body.querySelector("[data-next]").onclick = () => selectTrack((trackIdx + 1) % TRACKS.length);
-          volInput.addEventListener("input", () => { if (master) master.gain.value = Number(volInput.value) || 0; });
+          body.querySelector("[data-prev]").onclick = () => selectTrack(trackIdx - 1, !audio.paused || trackIdx < 0);
+          body.querySelector("[data-next]").onclick = () => selectTrack(trackIdx + 1, !audio.paused || trackIdx < 0);
+          body.querySelector("[data-refresh]").onclick = () => { audio.pause(); scan(); };
+          volInput.addEventListener("input", () => { audio.volume = Number(volInput.value) || 0; });
+          seekInput.addEventListener("input", () => {
+            if (audio.duration) audio.currentTime = (Number(seekInput.value) / 1000) * audio.duration;
+          });
 
           api.onClose(() => {
-            stop();
-            if (ac) ac.close().catch(() => {});
+            audio.pause();
+            audio.removeAttribute("src");
+            try { audio.load(); } catch (_) { /* ignore */ }
           });
-          selectTrack(0);
+
+          scan();
         },
       });
     },
@@ -1721,6 +2582,13 @@
               <div class="clock__digital" data-time>--:--:--</div>
               <div class="clock__date" data-date>—</div>
               <div class="clock__cal" data-cal></div>
+              <div class="clock__alarm">
+                <b>⏰ Alarm</b>
+                <input type="time" data-alarm value="07:00" />
+                <button class="btn" data-set-alarm>Set</button>
+                <button class="btn" data-clear-alarm>Clear</button>
+                <span data-alarm-status></span>
+              </div>
             </div>`;
 
           const timeEl = body.querySelector("[data-time]");
@@ -1758,144 +2626,64 @@
 
           tick();
           const timer = setInterval(tick, 1000);
-          api.onClose(() => clearInterval(timer));
+
+          const alarmInput = body.querySelector("[data-alarm]");
+          const alarmStatus = body.querySelector("[data-alarm-status]");
+          let alarmTime = null;
+          let alarmFired = false;
+
+          const say = (text, tone) => {
+            alarmStatus.textContent = text;
+            alarmStatus.dataset.tone = tone;
+          };
+
+          body.querySelector("[data-set-alarm]").onclick = () => {
+            alarmTime = alarmInput.value;
+            alarmFired = false;
+            say(`Alarm set for ${alarmTime}`, "good");
+          };
+          body.querySelector("[data-clear-alarm]").onclick = () => {
+            alarmTime = null;
+            alarmFired = false;
+            say("Cleared", "muted");
+          };
+
+          const alarmCheck = setInterval(() => {
+            if (!alarmTime || alarmFired) return;
+            const now = new Date();
+            const [h, m] = alarmTime.split(":").map(Number);
+            if (now.getHours() === h && now.getMinutes() === m && now.getSeconds() < 3) {
+              alarmFired = true;
+              say("⏰ Ringing!", "bad");
+              Toast.show("Alarm! ⏰", "good");
+            }
+          }, 1000);
+
+          api.onClose(() => { clearInterval(timer); clearInterval(alarmCheck); });
         },
       });
     },
   };
-/* ---- Pixoogle (in-window Wikipedia search) -------------------------------- */
-  Content.pixoogle = {
-    id: "pixoogle", title: "Pixoogle", icon: "🔎", accent: "#1e90ff",
-    description: "Search the web, right here in the window",
+
+  /* ---- DOOM (real WebAssembly port — DOOM shareware) --------------------- */
+  Content.doom = {
+    id: "doom", title: "DOOM", icon: "🛸", accent: "#e84f4f",
+    description: "The classic 1993 shooter — real WebAssembly port",
     open() {
       WM.open({
-        id: "pixoogle", title: "Pixoogle", icon: "🔎", accent: "#1e90ff",
-        width: 700, height: 540,
+        id: "doom", title: "DOOM", icon: "🛸", accent: "#e84f4f",
+        width: 920, height: 660,
         render(body) {
-          const history = Store.get("pixoogle", []);
-          body.innerHTML = `
-            <div class="pixoogle">
-              <div class="pixoogle__logo"><span class="c1">P</span><span class="c2">i</span><span class="c3">x</span><b>oogle</b></div>
-              <div class="pixoogle__search">
-                <input class="field" data-q placeholder="Search Wikipedia… (no real browser, promise)" />
-                <button class="btn btn--accent" data-act="go">Search</button>
-                <button class="btn" data-act="lucky" title="I'm feeling goofy">🎲</button>
-              </div>
-              <div class="pixoogle__meta muted" data-meta></div>
-              <div class="pixoogle__results" data-results></div>
-            </div>`;
-
-          const input = body.querySelector("[data-q]");
-          const results = body.querySelector("[data-results]");
-          const meta = body.querySelector("[data-meta]");
-          const GOOFY = ["cat", "rubber duck", "why is the sky blue", "ice cream", "spaceship"];
-
-          const setBusy = (text) => { meta.textContent = text || ""; };
-          const stripHtml = (html) => String(html || "").replace(/<[^>]*>/g, "");
-          const remember = (q) => {
-            history.unshift(q);
-            Store.set("pixoogle", history.slice(0, 12));
-          };
-
-          function renderHistory() {
-            if (!history.length) {
-              results.innerHTML = '<p class="muted" style="text-align:center;margin-top:24px">No searches yet. Go on, type something!</p>';
-              return;
-            }
-            results.innerHTML = history.map((item) => `
-              <button class="result" data-q="${esc(item)}">${esc(item)}<small>search again</small></button>`).join("");
-            results.querySelectorAll(".result").forEach((button) => {
-              button.onclick = () => { input.value = button.dataset.q; search(button.dataset.q); };
-            });
-          }
-
-          async function search(query) {
-            const q = (query || input.value).trim();
-            if (!q) { Toast.show("Type something to search for.", "error"); return; }
-            remember(q);
-            input.value = q;
-            setBusy(`Searching for “${q}”…`);
-            results.innerHTML = "";
-            try {
-              const url = "https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=12"
-                + `&srsearch=${encodeURIComponent(q)}&format=json&origin=*`;
-              const res = await invoke("net.get", { url });
-              if (res.status !== 200) throw new Error(`Wikipedia answered with status ${res.status}.`);
-              const data = JSON.parse(res.body);
-              const hits = (data && data.query && data.query.search) || [];
-              setBusy(`${hits.length} ${hits.length === 1 ? "result" : "results"} for “${q}”`);
-              if (!hits.length) {
-                results.innerHTML = '<p class="muted" style="text-align:center;margin-top:24px">No results. Try different words!</p>';
-                return;
-              }
-              results.innerHTML = hits.map((hit) => `
-                <button class="result" data-title="${esc(hit.title)}">
-                  <b>${esc(hit.title)}</b><small>${esc(stripHtml(hit.snippet))}…</small>
-                </button>`).join("");
-              results.querySelectorAll(".result").forEach((button) => {
-                button.onclick = () => article(button.dataset.title);
-              });
-            } catch (error) {
-              setBusy("");
-              results.innerHTML = `<p class="muted" style="margin-top:24px">${esc(error.message)}</p>`;
-              Toast.show("Pixoogle needs internet.", "error");
-            }
-          }
-
-          async function article(title) {
-            setBusy(`Loading “${title}”…`);
-            results.innerHTML = "";
-            try {
-              const url = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1"
-                + `&format=json&origin=*&titles=${encodeURIComponent(title)}`;
-              const res = await invoke("net.get", { url });
-              const data = JSON.parse(res.body);
-              const pages = data && data.query && data.query.pages ? data.query.pages : {};
-              const page = Object.values(pages)[0];
-              const text = page && page.extract ? page.extract : "No article text available.";
-              const paragraph = esc(text)
-                .replace(/\n{2,}/g, "</p><p>")
-                .replace(/\n/g, "<br>");
-              results.innerHTML = `
-                <div class="row" style="margin-bottom:8px">
-                  <button class="btn" data-back>⬅ Back</button>
-                  <b style="font-size:16px;flex:1">${esc(title)}</b>
-                  <span class="chip">wikipedia</span>
-                </div>
-                <article class="wiki"><p>${paragraph}</p></article>`;
-              results.querySelector("[data-back]").onclick = () => search(input.value);
-              setBusy("");
-            } catch (error) {
-              setBusy("");
-              results.innerHTML = `<p class="muted" style="margin-top:24px">${esc(error.message)}</p>`;
-            }
-          }
-
-          async function randomArticle() {
-            setBusy("Feeling goofy…");
-            try {
-              const url = "https://en.wikipedia.org/w/api.php?action=query&list=random&rnnamespace=0&rnlimit=1&format=json&origin=*";
-              const res = await invoke("net.get", { url });
-              const data = JSON.parse(res.body);
-              const title = data && data.query && data.query.random && data.query.random[0]
-                ? data.query.random[0].title
-                : null;
-              if (title) { input.value = title; await article(title); }
-              else { setBusy(""); Toast.show("Couldn't find a random article.", "error"); }
-            } catch (error) {
-              setBusy("");
-              Toast.show(error.message, "error");
-            }
-          }
-
-          body.querySelector('[data-act="go"]').onclick = () => search();
-          body.querySelector('[data-act="lucky"]').onclick = () => {
-            const q = GOOFY[Math.floor(Math.random() * GOOFY.length)];
-            input.value = q;
-            search(q);
-          };
-          input.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
-          renderHistory();
+          body.style.padding = "0";
+          body.style.overflow = "hidden";
+          body.style.background = "#000";
+          const frame = document.createElement("iframe");
+          frame.className = "doom-frame";
+          frame.title = "DOOM";
+          frame.src = "/apps/doom/doom.html";
+          frame.setAttribute("allow", "fullscreen");
+          frame.style.cssText = "width:100%;height:100%;border:0;background:#000;display:block;";
+          body.appendChild(frame);
         },
       });
     },
@@ -2060,6 +2848,7 @@
     { id: "comic", name: "Comic", value: '"Comic Sans MS","Chalkboard SE","Comic Neue",cursive' },
     { id: "print", name: "Hand-drawn", value: '"Segoe Print","Bradley Hand",cursive' },
     { id: "mono", name: "Pixel-ish", value: '"Lucida Console","Cascadia Code",monospace' },
+    { id: "arial", name: "Arial", value: '"Arial","Helvetica Neue","sans-serif"' },
   ];
   const WINDOW_STYLES = [
     { id: "drawn", name: "Drawn" },
@@ -2182,11 +2971,22 @@
                 <div class="option-grid" data-window-styles></div>
               </div>
               <div class="setting-block">
+                <h3>🌗 Theme</h3>
+                <div class="option-grid">
+                  <button class="option ${current.theme === "light" ? "option--active" : ""}" data-theme-choice="light">☀️ Light</button>
+                  <button class="option ${current.theme === "dark" ? "option--active" : ""}" data-theme-choice="dark">🌙 Dark</button>
+                </div>
+              </div>
+              <div class="setting-block">
                 <h3>🏷️ Dock labels</h3>
                 <div class="option-grid">
                   <button class="option ${current.labels ? "option--active" : ""}" data-labels="true">Show</button>
                   <button class="option ${current.labels ? "" : "option--active"}" data-labels="false">Hide</button>
                 </div>
+              </div>
+              <div class="setting-block">
+                <h3>🔍 Zoom</h3>
+                <div class="option-grid" data-zoom></div>
               </div>
               <button class="btn btn--danger" data-reset>♻️ Reset everything</button>`;
 
@@ -2204,12 +3004,29 @@
               styleHost.appendChild(option);
             });
 
+            apPanel.querySelectorAll("[data-theme-choice]").forEach((button) => {
+              button.onclick = () => { saveSettings({ theme: button.dataset.themeChoice }); applySettings(); renderSettings(); };
+            });
+
             apPanel.querySelectorAll("[data-labels]").forEach((button) => {
               button.onclick = () => { saveSettings({ labels: button.dataset.labels === "true" }); applySettings(); renderSettings(); };
             });
 
+            const zoomHost = apPanel.querySelector("[data-zoom]");
+            const ZOOM_PRESETS = [
+              { label: "1×", factor: 1 },
+              { label: "0.75×", factor: 0.75 },
+              { label: "0.50×", factor: 0.5 },
+              { label: "0.25×", factor: 0.25 },
+            ];
+            ZOOM_PRESETS.forEach((zoom) => {
+              const option = el("button", `option ${current.zoom === zoom.factor ? "option--active" : ""}`, zoom.label);
+              option.onclick = () => { saveSettings({ zoom: zoom.factor }); applySettings(); renderSettings(); };
+              zoomHost.appendChild(option);
+            });
+
             apPanel.querySelector("[data-reset]").onclick = () => {
-              ["wallpaper", "font", "labels", "windowStyle", "dock", "customApps", "pixoogle", "snakeBest", "studioLanguage", "studioCode"].forEach((key) => Store.remove(key));
+              ["wallpaper", "font", "labels", "windowStyle", "theme", "dock", "customApps", "snakeBest", "tetrisBest", "studioLanguage", "studioCode", "zoom"].forEach((key) => Store.remove(key));
               applySettings();
               applyWallpaper();
               renderDock();
@@ -2225,6 +3042,73 @@
   };
 
   /* ---- About ------------------------------------------------------------- */
+  /* ---- KatGPT (ask anything; receive meows) ------------------------------ */
+  Content.katgpt = {
+    id: "katgpt", title: "KatGPT", icon: "🐱", accent: "#ff7ac2",
+    description: "Ask anything. Get meows.",
+    open() {
+      WM.open({
+        id: "katgpt", title: "KatGPT", icon: "🐱", accent: "#ff7ac2",
+        width: 620, height: 560,
+        render(body, api) {
+          body.innerHTML = `
+            <div class="katgpt">
+              <div class="katgpt__log" data-log>
+                <div class="katgpt__msg katgpt__msg--bot">
+                  <div class="katgpt__avatar">🐱</div>
+                  <div class="katgpt__bubble">Hi, I'm <b>KatGPT</b>. Ask me anything and I'll answer in meows. 🐾</div>
+                </div>
+              </div>
+              <form class="katgpt__composer" data-form>
+                <input class="katgpt__input" data-input placeholder="Ask KatGPT anything…" autocomplete="off" spellcheck="false" />
+                <button class="btn katgpt__send" type="submit">Send 🐾</button>
+              </form>
+            </div>`;
+
+          const log = body.querySelector("[data-log]");
+          const form = body.querySelector("[data-form]");
+          const input = body.querySelector("[data-input]");
+          const scroll = () => { log.scrollTop = log.scrollHeight; };
+
+          function addMessage(role, build) {
+            const msg = el("div", `katgpt__msg katgpt__msg--${role}`);
+            msg.appendChild(el("div", "katgpt__avatar", role === "user" ? "🧑" : "🐱"));
+            const bubble = el("div", "katgpt__bubble");
+            build(bubble);
+            msg.appendChild(bubble);
+            log.appendChild(msg);
+            scroll();
+            return bubble;
+          }
+
+          function answer() {
+            // The entire state of the art: a random pile of meows, 1–426 of them.
+            const count = 1 + Math.floor(Math.random() * 426);
+            const bubble = addMessage("bot", (b) => {
+              b.innerHTML = `<span class="katgpt__typing">${"meow ".repeat(Math.min(count, 3)).trim()}…</span>`;
+            });
+            setTimeout(() => {
+              bubble.textContent = Array(count).fill("meow").join(" ");
+              scroll();
+            }, 420);
+          }
+
+          form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const value = input.value.trim();
+            if (!value) { return; }
+            addMessage("user", (b) => { b.textContent = value; });
+            input.value = "";
+            answer();
+          });
+
+          api.onReopen = () => input.focus();
+          input.focus();
+        },
+      });
+    },
+  };
+
   Content.about = {
     id: "about", title: "About OS", icon: "💠", accent: "#00cec9",
     description: "Version and system info",
@@ -2319,7 +3203,13 @@
         parent.postMessage({ katStudio: true, type: "invoke", callId: id, cmd: type, payload: payload === undefined ? null : payload }, "*");
       });
     },
-    setTitle: function (t) { parent.postMessage({ katStudio: true, type: "setTitle", text: String(t) }, "*"); }
+    setTitle: function (t) { parent.postMessage({ katStudio: true, type: "setTitle", text: String(t) }, "*"); },
+    requestPointerLock: function (element) {
+      var el = element || document.body;
+      return el.requestPointerLock ? el.requestPointerLock() : null;
+    },
+    exitPointerLock: function () { if (document.exitPointerLock) { document.exitPointerLock(); } },
+    setResizable: function (value) { parent.postMessage({ katStudio: true, type: "setResizable", value: value !== false }, "*"); }
   };
 })();
 `;
@@ -2378,6 +3268,8 @@ ${appTag}
         .catch((err) => event.source.postMessage({ katStudio: true, type: "invokeReply", callId: m.callId, ok: false, error: err.message }, "*"));
     } else if (m.type === "setTitle") {
       if (latestInstalledWindow && latestInstalledWindow.api) latestInstalledWindow.api.setTitle(m.text);
+    } else if (m.type === "setResizable") {
+      if (latestInstalledWindow && latestInstalledWindow.api) latestInstalledWindow.api.setResizable(m.value);
     } else if (m.type === "katcheck") {
       // An installed app crashed - show the KatCheck window from the shell.
       if (typeof ByteSize.katcheck === "function") ByteSize.katcheck(m);
@@ -2385,6 +3277,14 @@ ${appTag}
     }
   }
   window.addEventListener("message", handleAppMessage);
+
+  // Pointer lock is available to every app (built-in or installed via ZIP);
+  // pressing Esc always releases the cursor, in the shell and in any frame.
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }, true);
 
   // Open an installed ZIP app in a Family A window.
   function openInstalledApp(app) {
@@ -2396,6 +3296,7 @@ ${appTag}
       accent: app.accent,
       width: 680,
       height: 520,
+      resizable: app.resizable !== false,
       render(body) {
         body.style.padding = "0";
         body.style.overflow = "hidden";
@@ -2411,16 +3312,18 @@ ${appTag}
     win.onClose(() => { if (latestInstalledWindow && latestInstalledWindow.api === win) latestInstalledWindow = null; });
     return win;
   }
+
 /* ======================================================================
      App registry (base + custom)
      ====================================================================== */
   const BASE_APPS = [
-    Content.fileManager, Content.notepad, Content.paint, Content.snake,
+    Content.fileManager, Content.notepad, Content.paint, Content.snake, Content.tetris,
     Content.calc, Content.music, Content.clock,
-    Content.terminal, Content.installer, Content.studio, Content.pixoogle, Content.settings,
-    Content.about,
+    Content.terminal, Content.installer, Content.packager, Content.studio,
+    Content.doom, Content.katgpt, Content.settings, Content.about,
+
   ];
-  const DEFAULT_DOCK = ["files", "notepad", "paint", "snake", "calc", "music", "clock", "terminal", "installer", "pixoogle", "settings", "about"];
+  const DEFAULT_DOCK = ["files", "notepad", "paint", "snake", "tetris", "doom", "calc", "music", "clock", "katgpt", "terminal", "installer", "packager", "settings", "about"];
 
   function AppRegistry() {
     const installed = (Store.get("customApps", []) || []).filter((app) => app && typeof app.html === "string");
@@ -2490,6 +3393,8 @@ ${appTag}
       font: Store.get("font", "comic"),
       labels: Store.get("labels", true),
       windowStyle: Store.get("windowStyle", "drawn"),
+      theme: Store.get("theme", "light"),
+      zoom: Store.get("zoom", 1),
     };
   }
   function saveSettings(patch) {
@@ -2497,6 +3402,8 @@ ${appTag}
     Store.set("font", next.font);
     Store.set("labels", next.labels);
     Store.set("windowStyle", next.windowStyle);
+    Store.set("theme", next.theme);
+    Store.set("zoom", next.zoom);
   }
   function currentWallpaper() {
     const pref = Store.get("wallpaper", null);
@@ -2509,6 +3416,22 @@ ${appTag}
     document.documentElement.style.setProperty("--font", font.value);
     document.body.classList.toggle("hide-dock-labels", !settings.labels);
     document.body.dataset.windowStyle = settings.windowStyle;
+    const dark = settings.theme === "dark";
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    const toggle = $("#theme-toggle");
+    if (toggle) {
+      toggle.textContent = dark ? "☀️" : "🌙";
+      toggle.title = dark ? "Switch to light mode" : "Switch to dark mode";
+      toggle.setAttribute("aria-pressed", String(dark));
+    }
+    invoke("os.setZoom", { factor: settings.zoom }).catch(() => {});
+  }
+  function setTheme(theme) {
+    const next = theme === "dark" ? "dark" : "light";
+    saveSettings({ theme: next });
+    applySettings();
+    Toast.show(next === "dark" ? "Dark mode on 🌙" : "Light mode on ☀️", "good");
+    return next;
   }
   async function applyWallpaper() {
     const desktopEl = $("#desktop");
@@ -2563,11 +3486,28 @@ ${appTag}
     window.addEventListener("beforeunload", () => Store.flush());
 
     $("#start-button").onclick = (event) => { event.stopPropagation(); toggleStart(); };
+    $("#theme-toggle").onclick = (event) => {
+      event.stopPropagation();
+      setTheme(currentSettings().theme === "dark" ? "light" : "dark");
+    };
     document.addEventListener("pointerdown", (event) => {
       if (startMenu.hidden) return;
       if (startMenu.contains(event.target) || $("#start-button").contains(event.target)) return;
       toggleStart(false);
     });
+
+    if (window.ByteSizeNative) {
+      window.__bzosSwipe = (dir) => {
+        toggleStart(dir === "up" || dir === "left");
+      };
+      document.body.dataset.phoneMode = "on";
+      if (!Store.get("phoneHintSeen", false)) {
+        const hint = el("div", "phone-hint", "Swipe up or ➡️ for your apps 👆");
+        $("#desktop").appendChild(hint);
+        Store.set("phoneHintSeen", true);
+        setTimeout(() => hint.remove(), 3200);
+      }
+    }
 
     if (!ByteSize.hosted) {
       Toast.show("Outside the native host — backend commands are unavailable.", "error", 7000);

@@ -1,6 +1,8 @@
-# ByteSize OS
+# ByteSize OS — v2
 
-A **fast, lightweight, powerful** C# + HTML hybrid desktop shell.
+A **fast, lightweight, powerful** C# + HTML hybrid desktop shell. Version 0.2.0.
+
+A native **.NET 8 / WinForms** host owns a single **WebView2** surface.
 
 A native **.NET 8 / WinForms** host owns a single **WebView2** surface. The entire
 user interface is plain **HTML + CSS + JavaScript** (no React, no bundler, no
@@ -9,6 +11,33 @@ access, process listing, launching apps — is done in **C#** and exposed to the
 web layer through a tiny JSON message bridge.
 
 > Small enough to read in one sitting. Powerful enough to be a real starting point.
+
+---
+
+## v2 changes (0.2.0)
+
+- Shell branded **v2** (was v1); version `0.2.0`
+- **Arial** font added to the font picker (Comic / Hand-drawn / Pixel-ish / **Arial**)
+- **Notepad**: text now aligns perfectly on the ruled lines — line height matches the rule period (28px = 1 line box) and the rule grid is anchored to the content box
+- **Removed** the Roblox & Discord apps (and their CSP `frame-src` entries)
+- Desktop zoom settings: **1× / 0.75× / 0.50× / 0.25×** via native WebView2 `ZoomFactor`
+- **Clock** gained a **v2 alarm** feature (set / clear / ring)
+- **KatGPT** message counter removed
+- **PNG app icons** + **v2 start-menu badge**
+- **Android: a phone inside a phone** — phone-frame bezel, rounded corners, home
+  strip; swipe up / left / right to see apps, down to dismiss
+
+## Android port
+
+The same frontend also runs on **Android**, in [`../Android`](../Android). That
+project is a native Kotlin app with a single `WebView`; the host responsibilities
+(NSWindow/WebView2 → `Activity`/`WebView`, the C# bridge → a `@JavascriptInterface`)
+are reimplemented in Kotlin, while the HTML/CSS/JS in `wwwroot/` is reused
+**verbatim**. See [`../Android/README.md`](../Android/README.md) for what is
+ported, what is Android-specific, and how to build the APK.
+
+`js/bridge.js` detects the platform: it uses `chrome.webview` on Windows and a
+guarded `ByteSizeNative` fallback on Android, so both hosts share one frontend.
 
 ---
 
@@ -130,18 +159,19 @@ Services/
   NativeMetrics.cs         CPU / memory via Win32 P/Invoke (no WMI).
   Storage.cs               Sandboxed home storage (…/bytesizeoshomestorage).
   FileService.cs           Virtual "/" filesystem: list, text, bytes, data URLs.
-  AppInstallerService.cs   Installs ZIP apps (metadata.json + .html + .js).
+  AppInstallerService.cs   Builds and installs ZIP apps (metadata.json + .html + .js).
   SettingsService.cs       Per-system settings at /System/settings.json.
   StudioService.cs         Compiles/runs C, C++, Rust and C# (sandboxed).
-  WebService.cs            Allowlisted in-window HTTP fetches (Pixoogle).
+  WebService.cs            Allowlisted background HTTP fetches (net.get).
   ShellService.cs          Process listing.
 wwwroot/
-  index.html               The shell UI (desktop, dock, taskbar).
+  index.html               The shell UI (desktop shortcuts, windows, taskbar).
   assets/app-icon.png      App icon (taskbar, window, START button, favicon).
   assets/wallpapers/       Packaged wallpapers (Kat default).
   css/style.css            Hand-written "Family A" cartoon theme.
   js/bridge.js             JS side of the message bridge.
   js/app.js                Window manager, dock, taskbar, start menu, all apps.
+  apps/doom/               DOOM — a real WebAssembly app (doom.wasm + driver).
 ```
 
 `wwwroot` is copied next to the binary on build and served to WebView2 through a
@@ -198,19 +228,36 @@ Each app has its own accent colour that drives its window border and title bar
   there is no escape hatch to the real machine.
 - **Notepad** — real open/save via `fs.readText` / `fs.writeText`, with Ctrl+S.
 - **Paint** — brush, eraser, palette and sizes; saves a real PNG through
-  `fs.writeBytes`.
+  `fs.writeBytes`. The canvas fills the window edge-to-edge with **zoom**
+  (Fit / Fill / 1:1, ±‑buttons, Ctrl + scroll, Ctrl +/−/0/1), so a large HD
+  image can be shrunk to fit. **Open…** loads any image from the sandbox onto
+  the canvas, and double-clicking an image in the File Manager opens it here.
 - **Snake** — a playable canvas game (arrow keys / WASD, space to pause).
+- **Tetris** — a 10×20 block-stacker with a **next-piece preview** and a **ghost
+  piece** showing where the block will land. Arrows / WASD to move and rotate,
+  Space to hard-drop, P to pause; levels speed up every 10 lines and the best
+  score is remembered.
 - **Terminal** — a shell (`sys`, `mem`, `ps`, `ls`, `cd`, `cat`, `mkdir`,
-  `notepad`, `paint`, `snake`, `calc`, `music`, `clock`, `pixoogle`, `settings`,
-  …) whose commands run in C#.
+  `notepad`, `paint`, `snake`, `tetris`, `calc`, `music`, `clock`, `doom`, `katgpt`,
+  `packager`, `settings`, `theme [dark|light]`, …) whose commands run in C#.
 - **Installer** — install **ZIP apps** and manage your dock. A ByteSize ZIP is a
   `.zip` containing `metadata.json` (`title`, `entry`, `script`, plus optional
-  `id`, `icon`, `accent`, `description`), one `.html` file and one `.js` file.
-  Drop the ZIP anywhere in the sandbox (a sample ships at
+  `id`, `icon`, `accent`, `description`, `resizable`), one `.html` file and one
+  `.js` file. Drop the ZIP anywhere in the sandbox (a sample ships at
   `/Downloads/ExampleApp.zip`), pick it, and it appears on the dock as a real
   app — complete with a `window.bs` bridge to C# (`bs.invoke("os.ping", …)`),
   `console.log` forwarding, and a coloured Family A window. Uninstall is one
-  click.
+  click. An app can **refuse to be resized** by setting `"resizable": false` in
+  `metadata.json`, or at runtime with `bs.setResizable(false)` — this hides the
+  resize grip and the Maximize button. (The built-in Calculator is fixed-size.)
+- **App Packager** — turn a single **.html** file (with its JavaScript embedded
+  inline) into an installable ByteSize ZIP. Pick the file and every inline
+  `<script>` is extracted into one **.js** file while the document is cleaned up.
+  Then choose the `metadata.json` fields — **name**, **id**, **icon** (emoji
+  palette or custom glyph), **accent colour**, **description** and whether the
+  window may be resized — and hit **Build & Install** to drop the finished app
+  straight into your dock, or **Save .zip only** to keep it in `/Downloads`.
+  (This is the front-end counterpart of the C# `app.package` command.)
 - **Code Studio** — write and run **C, C++, Rust and C#** using whichever
   toolchain is installed on the PC (`gcc`/`clang`, `g++`/`clang++`, `rustc`,
   the .NET SDK). By default the compiled program runs **sandboxed**: its working
@@ -219,16 +266,33 @@ Each app has its own accent colour that drives its window border and title bar
   timeout). Tick **Run as admin** to skip those restrictions. Compile and run
   output appears right in the window.
 - **Calculator** — keyboard + mouse arithmetic, Family A buttons.
-- **Music** — a lo-fi synth radio: three built-in chiptune loops generated with
-  the Web Audio API (no files needed), with play/pause/next and volume.
+- **Music** — plays the audio files in your **`/Music`** folder (MP3, WAV, OGG,
+  M4A, FLAC…). The window lists what it finds, with play/pause, previous/next,
+  a seek bar and volume; a ⟳ button rescans the folder. Songs are streamed
+  straight from the sandbox (nothing is bundled), and the app can never reach
+  outside it.
 - **Clock** — analog + digital time, full date, and a month calendar.
-- **Pixoogle** — search the web **in-window**: it queries Wikipedia through the
-  C# `net.get` service and renders results + article text inside the window. No
-  real browser is ever opened. History is kept in the settings file.
+- **KatGPT** — the OS's resident AI (sort of). Type anything and KatGPT answers
+  with a random pile of **meows** — anywhere from **1 to 426**, picked fresh by
+  RNG every time.
+- **DOOM** — the actual 1993 shooter (shareware episode), running as a **real
+  WebAssembly build** (`doomgeneric` compiled to `doom.wasm`). The window hosts
+  the wasm module, copies its 640×400 frame buffer to a canvas at DOOM's native
+  35 FPS, and forwards input to the engine. **Click to play**: the mouse is
+  captured with the Pointer Lock API and turns the marine, left-click fires,
+  right-click opens/uses; **WASD**/arrows move, **1**–**7** pick weapons.
+  **Esc** releases the mouse (press it again for the DOOM menu). The module
+  itself is keyboard-only, so mouse turning is translated into the engine's
+  turn keys.
+- **Dark mode** — the whole shell (windows, dock, taskbar, START menu, toasts
+  and every built-in app) has a full dark theme. Flip it from **Settings →
+  Appearance → Theme**, the sun/moon button on the taskbar, or the `theme` terminal
+  command; the choice is remembered just like the other settings.
 - **Settings** — **Wallpaper** tab (Kat default / Classic Blueprint Grid /
   custom image from `/Wallpapers` or uploaded into it) and an **Appearance** tab
-  (font style, dock labels, and window style: **Drawn / Bubbly / 1995 / Squares**).
-  Everything persists in `/System/settings.json`.
+  (font style, dock labels, **light / dark theme**, and window style:
+  **Drawn / Bubbly / 1995 / Squares**). Everything persists in
+  `/System/settings.json`.
 - **About OS** — runtime and machine facts, including the sandbox path.
 
 The **START** button opens the launcher with a live CPU/RAM readout. Windows use

@@ -20,6 +20,18 @@ public static class JsonRoot
             ? number
             : fallback;
 
+    public static double ReadDouble(JsonElement element, string name, double fallback)
+        => TryNumber(element, name, out var number) ? number : fallback;
+
+    private static bool TryNumber(JsonElement element, string name, out double number)
+    {
+        number = 0;
+        return element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetDouble(out number);
+    }
+
     public static bool ReadBool(JsonElement element, string name, bool fallback)
         => element.ValueKind == JsonValueKind.Object
            && element.TryGetProperty(name, out var value)

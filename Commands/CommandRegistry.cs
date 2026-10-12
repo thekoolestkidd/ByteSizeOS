@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using ByteSizeOS.Bridge;
 using ByteSizeOS.Services;
@@ -10,7 +11,7 @@ namespace ByteSizeOS.Commands;
 /// </summary>
 public static class CommandRegistry
 {
-    public static void RegisterAll(WebBridge bridge, Action? onShutdown = null)
+    public static void RegisterAll(WebBridge bridge, Action? onShutdown = null, Action<double>? setZoom = null)
     {
         var system = new SystemService();
         var files = new FileService();
@@ -27,6 +28,25 @@ public static class CommandRegistry
             .On("os.shutdown", _ =>
             {
                 (onShutdown ?? ShutdownDefault)();
+                return true;
+            })
+
+            .On("os.openExternal", payload =>
+            {
+                var url = JsonRoot.ReadString(payload, "url");
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                    || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                {
+                    throw new ArgumentException("Only http(s) URLs can be opened.");
+                }
+                Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+                return true;
+            })
+
+            .On("os.setZoom", payload =>
+            {
+                var factor = Math.Clamp(JsonRoot.ReadDouble(payload, "factor", 1.0), 0.25, 5.0);
+                setZoom?.Invoke(factor);
                 return true;
             })
 
@@ -50,6 +70,14 @@ public static class CommandRegistry
 
             .On("app.installZip", payload => appInstaller.Install(JsonRoot.ReadString(payload, "path")))
 
+            .On("app.package", payload => appInstaller.Package(
+                JsonRoot.ReadString(payload, "path"),
+                JsonRoot.ReadString(payload, "metadata"),
+                JsonRoot.ReadString(payload, "entry"),
+                JsonRoot.ReadString(payload, "html"),
+                JsonRoot.ReadString(payload, "script"),
+                JsonRoot.ReadString(payload, "js")))
+
             .On("app.fact", _ => new[]
             {
                 "A single cloud can weigh over a million pounds.",
@@ -70,13 +98,8 @@ public static class CommandRegistry
             .OnAsync("studio.run", payload => Task.Run<object?>(() => studio.Run(
                 JsonRoot.ReadString(payload, "language"),
                 JsonRoot.ReadString(payload, "code"),
-                JsonRoot.ReadBool(payload, "admin", false))))
+                JsonRoot.ReadBool(payload, "admin", false))));
 
-            .On("app.beep", _ =>
-            {
-                Console.Beep();
-                return true;
-            });
     }
 
     private static void ShutdownDefault() => Application.Exit();

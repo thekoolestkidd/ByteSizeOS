@@ -1,6 +1,7 @@
+using System;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
 using ByteSizeOS.Bridge;
 using ByteSizeOS.Commands;
@@ -16,6 +17,7 @@ namespace ByteSizeOS.Shell;
 public sealed class MainForm : Form
 {
     private const string VirtualHost = "app.bytesizeos.local";
+    private const string MediaHost = "media.bytesizeos.local";
     private const string StartUrl = $"https://{VirtualHost}/index.html";
 
     private readonly WebView2 _webView;
@@ -49,8 +51,29 @@ public sealed class MainForm : Form
 
     private static string WebRoot => Path.Combine(AppContext.BaseDirectory, "wwwroot");
 
+    // Log file path inside the sandbox
+    private static string LogPath => Path.Combine(
+        Services.Storage.Root,
+        "logoutput.txt");
+
+    private static void Log(string message)
+    {
+        try
+        {
+            // Append timestamped log entry
+            var entry = $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}";
+            File.AppendAllText(LogPath, entry, new UTF8Encoding(false));
+        }
+        catch
+        {
+            // Best-effort logging; non-fatal if the file can't be written.
+        }
+    }
+
     private async Task InitializeAsync()
     {
+        Log("ByteSize OS starting up");
+
         if (!File.Exists(Path.Combine(WebRoot, "index.html")))
         {
             MessageBox.Show(
@@ -88,7 +111,10 @@ public sealed class MainForm : Form
             core.Settings.AreBrowserAcceleratorKeysEnabled = false;
             core.Settings.IsPasswordAutosaveEnabled = false;
             core.Settings.IsGeneralAutofillEnabled = false;
-            core.Settings.IsZoomControlEnabled = true;
+            // Keep WebView page zoom off: the OS shell is meant to fill the screen
+            // as-is, and Ctrl+wheel / Ctrl+ +− are used by apps (Paint) for their
+            // own canvas zoom instead of scaling the whole UI.
+            core.Settings.IsZoomControlEnabled = false;
 
 #if DEBUG
             core.Settings.AreDevToolsEnabled = true;
@@ -103,15 +129,28 @@ public sealed class MainForm : Form
                 WebRoot,
                 CoreWebView2HostResourceAccessKind.Allow);
 
-            // Keep the WebView sealed to the app origin: nothing navigates away
-            // and nothing opens the real browser. In-window apps handle their
-            // own content through the bridge.
+            // The sandbox gets its own host so media apps (Music) can stream
+            // audio/video with range requests instead of piping base64 through
+            // the bridge. It is only reachable from inside this WebView.
+            core.SetVirtualHostNameToFolderMapping(
+                MediaHost,
+                Services.Storage.Root,
+                CoreWebView2HostResourceAccessKind.Allow);
+
+            // Keep the OS shell sealed to the app origin: navigation stays on the
+            // virtual host and file:// is refused.
             core.NavigationStarting += OnNavigationStarting;
             core.NewWindowRequested += OnNewWindowRequested;
 
             var bridge = new WebBridge(core);
             _bridge = bridge;
-            CommandRegistry.RegisterAll(bridge, onShutdown: ShutdownApp);
+                CommandRegistry.RegisterAll(bridge, onShutdown: ShutdownApp, setZoom: factor =>
+            {
+                void Apply() => _webView.ZoomFactor = factor;
+                if (_webView.InvokeRequired) _webView.BeginInvoke(new Action(Apply));
+                else Apply();
+            });
+            Log("Bridge initialized, navigating to start URL");
 
             core.Navigate(StartUrl);
         }
@@ -129,6 +168,7 @@ public sealed class MainForm : Form
     /// <summary>"Close OS" from the frontend (os.shutdown command).</summary>
     private void ShutdownApp()
     {
+        Log("ByteSize OS shutting down");
         if (InvokeRequired)
         {
             BeginInvoke(new Action(ShutdownApp));

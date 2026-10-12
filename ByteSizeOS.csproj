@@ -13,7 +13,7 @@
     <Product>ByteSize OS</Product>
     <AssemblyTitle>ByteSize OS</AssemblyTitle>
     <Description>A fast, lightweight, powerful C# + HTML hybrid shell.</Description>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Company>ByteSize</Company>
     <ApplicationIcon>app-icon.ico</ApplicationIcon>
 

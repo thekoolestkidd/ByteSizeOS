@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -162,6 +163,17 @@ public sealed class StudioService
         }
 
         var run = Execute(exePath, string.Empty, dir, sandboxed: !admin, RunTimeoutMs);
+
+        // Write output to logoutput.txt for debugging
+        try
+        {
+            var logPath = Path.Combine(dir, "logoutput.txt");
+            File.WriteAllText(logPath, run.Output ?? string.Empty, new UTF8Encoding(false));
+        }
+        catch
+        {
+            // Best-effort logging; non-fatal if the file can't be written.
+        }
 
         return new
         {
