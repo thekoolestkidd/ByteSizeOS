@@ -24,20 +24,6 @@ web layer through a tiny JSON message bridge.
 - **Clock** gained a **v2 alarm** feature (set / clear / ring)
 - **KatGPT** message counter removed
 - **PNG app icons** + **v2 start-menu badge**
-- **Android: a phone inside a phone** — phone-frame bezel, rounded corners, home
-  strip; swipe up / left / right to see apps, down to dismiss
-
-## Android port
-
-The same frontend also runs on **Android**, in [`../Android`](../Android). That
-project is a native Kotlin app with a single `WebView`; the host responsibilities
-(NSWindow/WebView2 → `Activity`/`WebView`, the C# bridge → a `@JavascriptInterface`)
-are reimplemented in Kotlin, while the HTML/CSS/JS in `wwwroot/` is reused
-**verbatim**. See [`../Android/README.md`](../Android/README.md) for what is
-ported, what is Android-specific, and how to build the APK.
-
-`js/bridge.js` detects the platform: it uses `chrome.webview` on Windows and a
-guarded `ByteSizeNative` fallback on Android, so both hosts share one frontend.
 
 ---
 
